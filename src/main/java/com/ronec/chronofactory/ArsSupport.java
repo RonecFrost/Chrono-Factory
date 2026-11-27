@@ -53,10 +53,10 @@ final class ArsSupport{
     }
     static Object mana(FakePlayer f)throws ReflectiveOperationException{return invoke(Class.forName(ROOT+"setup.registry.CapabilityRegistry"),"getMana",f);}
     static void manaTick(FakePlayer f,CompoundTag a){
-        boolean has=false;for(int i=0;i<36;i++)if(book(f.getInventory().getItem(i))){has=true;break;}if(!has)return;
+        boolean has=false;for(int i=0;i<41;i++)if(book(f.getInventory().getItem(i))){has=true;break;}if(!has)return;
         try{
             Object cap=mana(f);if(cap==null)return;
-            int tier=1;for(int i=0;i<36;i++){ItemStack st=f.getInventory().getItem(i);if(book(st)){Object t=invoke(st.getItem(),"getTier");tier=Math.max(tier,t.getClass().getField("value").getInt(t));}}
+            int tier=1;for(int i=0;i<41;i++){ItemStack st=f.getInventory().getItem(i);if(book(st)){Object t=invoke(st.getItem(),"getTier");tier=Math.max(tier,t.getClass().getField("value").getInt(t));}}
             invoke(cap,"setBookTier",tier);
             Class<?> util=Class.forName(ROOT+"api.util.ManaUtil");int max=(Integer)invoke(util,"getMaxMana",f);invoke(cap,"setMaxMana",max);
             double regen=((Number)invoke(util,"getManaRegen",f)).doubleValue()/20.0;
@@ -64,7 +64,8 @@ final class ArsSupport{
             invoke(cap,"setMana",Math.min(max,current+regen));saveMana(f,a);
         }catch(Exception ignored){}
     }
-    static ItemActions.Outcome cast(ServerLevel l,FakePlayer f,CompoundTag job,ItemStack stack,int slot){
+    static ItemActions.Outcome cast(ServerLevel l,FakePlayer f,CompoundTag job,ItemStack stack,int slot){return cast(l,f,job,stack,slot,net.minecraft.world.InteractionHand.MAIN_HAND);}
+    static ItemActions.Outcome cast(ServerLevel l,FakePlayer f,CompoundTag job,ItemStack stack,int slot,net.minecraft.world.InteractionHand hand){
         try{
             if(!book(stack))return new ItemActions.Outcome(false,false,"No matching Ars spellbook");
             select(stack,slot);Object c=caster(stack);int chosen=(Integer)invoke(c,"getCurrentSlot");Object spell=invoke(c,"getSpell",chosen);
@@ -73,7 +74,7 @@ final class ArsSupport{
             int cost=((Number)invoke(spell,"getCost")).intValue();int discount=((Number)invoke(Class.forName(ROOT+"api.util.ManaUtil"),"getPlayerDiscounts",f,spell,stack)).intValue();cost=Math.max(0,cost-discount);
             double before=((Number)invoke(cap,"getCurrentMana")).doubleValue();
             if(before<cost)return new ItemActions.Outcome(false,false,"Waiting for mana: "+(int)before+"/"+cost);
-            Object result=invoke(c,"castSpell",l,f,net.minecraft.world.InteractionHand.MAIN_HAND,net.minecraft.network.chat.Component.literal("Invalid spell"));
+            Object result=invoke(c,"castSpell",l,f,hand,net.minecraft.network.chat.Component.literal("Invalid spell"));
             saveMana(f,job);boolean accepted=result instanceof net.minecraft.world.InteractionResultHolder<?> holder&&holder.getResult().consumesAction();
             return new ItemActions.Outcome(accepted,accepted,accepted?"Cast spell slot "+(chosen+1):"Ars cast rejected");
         }catch(Exception e){return new ItemActions.Outcome(false,false,"Ars casting API failed: "+e.getClass().getSimpleName());}

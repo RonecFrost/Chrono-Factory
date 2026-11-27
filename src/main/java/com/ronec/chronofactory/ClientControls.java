@@ -57,7 +57,8 @@ public final class ClientControls{
     }
     public static void show(ChronoFactory.UiState msg){
         Minecraft mc=Minecraft.getInstance();
-        if(mc.screen instanceof TimekeeperScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
+        if(mc.screen instanceof PlaybackScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
+        else if(mc.screen instanceof TimekeeperScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
         else mc.setScreen(new TimekeeperScreen(msg.key(),msg.state()));
     }
 }

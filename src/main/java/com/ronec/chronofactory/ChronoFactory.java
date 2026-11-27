@@ -170,7 +170,7 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("11");
+        var registrar=e.registrar("12");
         registrar.playToServer(PickBlock.TYPE,PickBlock.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)PickReplay.record(p);}));
         registrar.playToServer(RepeatSetting.TYPE,RepeatSetting.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)setRepeats(p,msg);}));
         registrar.playToServer(TemporalRelay.Command.TYPE,TemporalRelay.Command.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)TemporalRelay.command(p,msg);}));
@@ -828,7 +828,7 @@ public final class ChronoFactory {
             if(p.position().distanceToSqr(vec(a.getCompound("position")))>64)break;
             CompoundTag tl=a.getCompound("timeline");ListTag actions=timeline(tl);int index=a.getInt("index");
             boolean strict=tl.getBoolean("strict");
-            state.putBoolean("available",true);state.putBoolean("inventoryPaused",EchoInventoryMenu.isOpen(p.serverLevel(),key));state.putBoolean("strict",strict);state.putString("name",tl.getString("name"));
+            state.putBoolean("available",true);PlaybackControls.status(a,state);state.putBoolean("inventoryPaused",EchoInventoryMenu.isOpen(p.serverLevel(),key));state.putBoolean("strict",strict);state.putString("name",tl.getString("name"));
             state.putInt("cycle",a.getInt("cycles")+1);state.putInt("repeats",repeats(tl));state.putInt("tint",tint(tl));
             state.putString("reason",a.getString("reason").isEmpty()?"Running":a.getString("reason"));
             state.putInt("step",strict?a.getInt("rawIndex"):Math.min(index+1,actions.size()));state.putInt("total",strict?tl.getInt("rawTicks"):actions.size());
@@ -939,6 +939,10 @@ public final class ChronoFactory {
         int color=tint(tl);
         if(docked&&!a.getBoolean("creative")&&energy(watch)<=0&&a.getInt("index")<actions.size()&&(!strict||a.getInt("rawIndex")<tl.getIntArray("raw").length/3)){a.putString("reason","Waiting for Relay energy");if(echo!=null)echo.visual(color,24,false,a.getFloat("walkPhase"),f.getMainHandItem(),false,position.getFloat("pitch"));f.getInventory().clearContent();return false;}
         if(dock!=null)dock.setChanged();
+        if(a.getBoolean("paused")){
+            if(echo!=null)echo.visual(color,a.getInt("phase"),false,a.getFloat("walkPhase"),echo.visualHeld(),false,position.getFloat("pitch"));
+            f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
+        }
         // At every loop boundary, physical material remains at the ending location.
         // The next manifestation starts empty, including tools, armor and cursor items.
         if(a.getInt("index")>=actions.size()||(strict&&a.getInt("rawIndex")>=tl.getIntArray("raw").length/3)){
@@ -1032,6 +1036,23 @@ public final class ChronoFactory {
                 if(equipHand(f,expectedOff,InteractionHand.OFF_HAND)){ItemActions.swap(f);done=true;working=true;reason="Swapped hands";}else reason="Missing recorded offhand item";}else reason="Missing item to swap";
         }else if("item_use".equals(type)||"attack_entity".equals(type)||"ars_edit".equals(type)){
             FlightReplay.context(l,a,tl,action.getInt("recordTick"));ItemActions.Outcome result=ItemActions.perform(l,f,a,action);done=result.done();working=result.working();swung=working;reason=result.reason();
+        }else if("use".equals(type)&&ArsSupport.book(wanted)){
+            // Spell targeting belongs to Ars, not to the recorded block reach.
+            int cursor=a.getInt("useCursor"),elapsed=a.getInt("heldElapsed");int[] offsets=action.getIntArray("useOffsets");if(offsets.length==0)offsets=new int[]{0};
+            int duration=Math.max(Math.max(1,action.getInt("duration")),offsets[offsets.length-1]+1);
+            boolean advance=true;InteractionHand hand=action.getBoolean("offhand")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND;
+            if(cursor<offsets.length&&elapsed>=offsets[cursor]){
+                int gap=action.contains("useGap")?action.getInt("useGap"):4;
+                if(cursor==0&&a.contains("lastBlockUseClock")&&a.getInt("playClock")-a.getInt("lastBlockUseClock")<gap){advance=false;working=true;reason="Waiting for recorded cast interval";}
+                else if(!equipHand(f,wanted,hand)){advance=false;reason="Missing spellbook of recorded tier";}
+                else{ListTag aims=action.getList("useAims",Tag.TAG_COMPOUND);CompoundTag aim=cursor<aims.size()?aims.getCompound(cursor):action;
+                    ItemActions.aim(f,aim.getFloat("yaw"),aim.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+                    FlightReplay.context(l,a,tl,action.getInt("recordTick")+offsets[cursor]);
+                    ItemActions.Outcome cast=ArsSupport.cast(l,f,a,f.getItemInHand(hand),action.getInt("spellSlot"),hand);advance=cast.done();reason=cast.reason();
+                    if(advance){a.putInt("useCursor",++cursor);a.putInt("lastBlockUseClock",a.getInt("playClock"));swung=true;}
+                }
+            }
+            if(advance){elapsed++;a.putInt("heldElapsed",elapsed);working=true;done=elapsed>=duration&&cursor>=offsets.length;reason="Casting spell ("+cursor+"/"+offsets.length+")";}
         }else if("air_swing".equals(type)){
             if(!equip(f,wanted))reason="Missing required item: "+itemName(wanted);
             else{
@@ -1220,10 +1241,12 @@ public final class ChronoFactory {
             entry.putString("name",tl.getString("name"));entry.putUUID("id",tl.getUUID("id"));entry.putInt("repeats",repeats(tl));entry.putBoolean("strict",tl.getBoolean("strict"));entry.putInt("tint",tint(tl));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
         if(summary.getBoolean("currentActive"))count++;
         summary.putInt("activeCount",count);summary.put("saved",entries);
+        PlaybackControls.watchStatus(p,key,summary);
         PacketDistributor.sendToPlayer(p,new UiState(key,summary));
     }
     static void uiCommand(ServerPlayer p,UiCommand cmd){
         if("inspect".equals(cmd.action())){inspect(p,cmd.key(),false);return;}
+        if(cmd.action().startsWith("echo_")){PlaybackControls.direct(p,cmd);return;}
         if("open".equals(cmd.action())){ItemStack held=p.getMainHandItem();if(watch(held))sendUi(p,held);return;}
         distinctWatches(p);
         ItemStack s=find(p,cmd.key());if(s.isEmpty())return;
@@ -1261,6 +1284,8 @@ public final class ChronoFactory {
                 case "save" -> {if(creative(s)&&t.contains("current")&&saved.size()<MAX_TIMELINES){saved.add(t.getCompound("current").copy());t.put("saved",saved);t.remove("current");put(s,t);}}
                 case "toggle" -> {if(creative(s)&&i>=0&&i<saved.size()){CompoundTag tl=saved.getCompound(i);if(active(p,cmd.key(),tl.getUUID("id")))dismiss(p,cmd.key(),tl.getUUID("id"));else manifest(p,s,tl);}}
                 case "delete" -> {if(creative(s)&&i>=0&&i<saved.size()){if(active(p,cmd.key(),saved.getCompound(i).getUUID("id")))say(p,"Dismiss this Echo before deleting its timeline.");else{saved.remove(i);t.put("saved",saved);put(s,t);}}}
+                case "pause_all" -> PlaybackControls.pauseWatch(p,cmd.key(),true);
+                case "resume_all" -> PlaybackControls.pauseWatch(p,cmd.key(),false);
                 case "dismiss_all" -> dismiss(p,cmd.key(),null);
                 case "manifest_all" -> {if(creative(s)){for(Tag x:saved)manifest(p,s,(CompoundTag)x);}}
                 default -> {}

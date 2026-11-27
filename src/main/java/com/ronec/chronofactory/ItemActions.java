@@ -101,10 +101,9 @@ final class ItemActions{
         int elapsed=job.getInt("heldElapsed"),duration=Math.max(1,action.getInt("duration"));boolean held=action.getBoolean("held");
         int gap=action.contains("itemGap")?action.getInt("itemGap"):4;
         if(!job.getBoolean("itemStarted")&&job.contains("lastItemClock")&&job.getInt("playClock")-job.getInt("lastItemClock")<gap)return new Outcome(false,true,"Waiting for recorded use interval");
-        if(ArsSupport.book(current)&&hand==InteractionHand.OFF_HAND){InteractionResult result=f.gameMode.useItem(f,l,current,hand);ArsSupport.saveMana(f,job);if(result.consumesAction())job.putInt("lastItemClock",job.getInt("playClock"));return new Outcome(result.consumesAction(),result.consumesAction(),"Offhand spell use");}
         if(!held||ArsSupport.book(current)){
             if(ArsSupport.book(current)){
-                Outcome cast=ArsSupport.cast(l,f,job,current,action.getInt("spellSlot"));if(cast.done())job.putInt("lastItemClock",job.getInt("playClock"));return cast;
+                Outcome cast=ArsSupport.cast(l,f,job,current,action.getInt("spellSlot"),hand);if(cast.done())job.putInt("lastItemClock",job.getInt("playClock"));return cast;
             }
             InteractionResult result=f.gameMode.useItem(f,l,current,hand);
             if(result.consumesAction())job.putInt("lastItemClock",job.getInt("playClock"));

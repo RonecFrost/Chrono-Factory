@@ -65,6 +65,11 @@ public final class EchoInventoryMenu extends AbstractContainerMenu{
     static boolean isOpen(ServerLevel l,UUID id){
         for(ServerPlayer p:l.getServer().getPlayerList().getPlayers())if(p.containerMenu instanceof EchoInventoryMenu m&&m.key.equals(id)&&m.level==l&&m.stillValid(p))return true;return false;
     }
+    static void syncFromJob(ServerLevel l,UUID id){
+        for(ServerPlayer p:l.getServer().getPlayerList().getPlayers())if(p.containerMenu instanceof EchoInventoryMenu m&&m.key.equals(id)&&m.level==l&&m.stillValid(p)){
+            m.ready=false;try{m.echo.clearContent();for(Tag entry:m.job.getList("inventory",Tag.TAG_COMPOUND)){CompoundTag t=(CompoundTag)entry;int k=t.getByte("Slot")&255;if(k>=100&&k<=103)k=36+k-100;else if(k==150)k=40;if(k>=0&&k<41)m.echo.setItem(k,ItemStack.parseOptional(l.registryAccess(),t));}}finally{m.ready=true;}m.broadcastChanges();
+        }
+    }
     static void closeFor(ServerLevel l,UUID id){
         for(ServerPlayer p:l.getServer().getPlayerList().getPlayers())if(p.containerMenu instanceof EchoInventoryMenu m&&m.key.equals(id)&&m.level==l)p.closeContainer();
     }

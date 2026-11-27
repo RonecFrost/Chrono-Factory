@@ -1,4 +1,4 @@
-# Chrono Factory 0.7.3-alpha
+# Chrono Factory 0.7.4-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -96,3 +96,7 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Native held-item renderer with explicit mirrored offhand transform; both hands use item poses. Inventory panel now drawn explicitly with gui overlay render type, independent of background hook. Test both skin widths, vanilla and modded shields, pick block, speed effect, command/pearl teleport, arrows and crossbow trajectories, GUI contrast. Build does not verify gameplay.
 
 - Teleport recording also flushes the pending teleport marker before subsequent interactions, preventing an accidental long walking segment. Input pick tries to place/select the item in its recorded hotbar slot. The terminal projectile flight sample extends a tiny distance toward the impact surface so native collision can detect the hit.
+
+## 0.7.4 spell reach and playback controls
+- Adaptive recorded spellbook block-use actions now invoke Ars native casting without the recorded block identity, chunk or six-block reach gate. Preserve actual spell slot, hand, aim, cadence and mana. Input uses native Ars casting for recorded spellbook use, too. Ars still determines actual touch/projectile/self targeting; do not force remote block interaction. Existing spellbook recordings should benefit.
+- Timekeeper Pause all/Resume all and Task controls page list individual active Echoes; per-job pause/resume and previous/next. Echo inventory has matching controls. Manual pause is persisted, freezes playback cursor without dropping inventory, and consumes normal stasis FE. Opening inventory still pauses separately. Remote seeking pauses the selected Echo; inventory seeking retains manual pause state and resumes on closing if not manually paused. Owner with physical watch can control remotely; nearby owner/operator can control the Echo. Adaptive seeks adjacent actions; Input seeks recorded action/event tick boundaries, keeping actual position. No undo, resource restoration, teleport, or automatic loop wrap; previously performed effects remain. Partial-action counters are reset and native Input menu contents returned before seek. Replaying a completed action can consume resources again. Test both modes and finite jobs with live inventories.

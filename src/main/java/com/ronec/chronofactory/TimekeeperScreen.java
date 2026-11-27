@@ -33,7 +33,7 @@ public final class TimekeeperScreen extends Screen {
     private void repeat(UUID id,int count){minecraft.setScreen(new RepeatScreen(this,count,n->PacketDistributor.sendToServer(new ChronoFactory.RepeatSetting(key,id,n))));}
     @Override protected void init(){
         popupIndex=CLOSED;
-        w=Math.min(344,width-12);h=Math.min(creative()?302:204,height-8);
+        w=Math.min(344,width-12);h=Math.min(creative()?326:228,height-8);
         left=(width-w)/2;top=(height-h)/2;
         int half=(w-30)/2;
         boolean unlocked=!recording()&&!state.getBoolean("otherRecording");
@@ -50,14 +50,18 @@ public final class TimekeeperScreen extends Screen {
         button(w-137,17,127,state.getBoolean("strict")?"Mode: Input":"Mode: Adaptive",()->send("mode",-1),unlocked&&!running());
         if(hasCurrent()&&state.hasUUID("currentId"))button(10,128,half,"Rename: "+font.plainSubstrByWidth(state.getString("currentName"),half-52),()->rename(state.getUUID("currentId"),state.getString("currentName")),unlocked);
         button(hasCurrent()?20+half:10,128,hasCurrent()?half:w-20,"Repeat: "+repeatLabel(state.getInt("repeats")),()->repeat(state.hasUUID("currentId")?state.getUUID("currentId"):new UUID(0,0),state.getInt("repeats")),unlocked&&!running());
+        boolean jobs=state.getList("jobs",Tag.TAG_COMPOUND).size()>0;
+        boolean allPaused=jobs&&state.getInt("pausedCount")==state.getList("jobs",Tag.TAG_COMPOUND).size();
+        button(10,153,half,allPaused?"Resume all":"Pause all",()->send(allPaused?"resume_all":"pause_all",0),jobs);
+        button(20+half,153,half,"Task controls...",()->minecraft.setScreen(new PlaybackScreen(this,key,state)),jobs);
         if(creative()){
-            button(10,153,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
-            button(20+half,153,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
-            rows=Math.max(1,(h-206)/22);
+            button(10,178,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
+            button(20+half,178,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
+            rows=Math.max(1,(h-231)/22);
             int max=Math.max(0,(saved().size()-1)/rows);page=Math.min(page,max);
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
-                int y=179+row*22;CompoundTag entry=saved().getCompound(i);
+                int y=204+row*22;CompoundTag entry=saved().getCompound(i);
                 if(entry.hasUUID("id")){button(10,y,Math.max(20,w-271),font.plainSubstrByWidth(entry.getString("name"),Math.max(10,w-281)),()->rename(entry.getUUID("id"),entry.getString("name")),unlocked);
                 button(w-258,y,43,entry.getInt("repeats")==0?"Inf.":entry.getInt("repeats")+"x",()->repeat(entry.getUUID("id"),entry.getInt("repeats")),unlocked&&!entry.getBoolean("active"));}
                 button(w-212,y,35,entry.getBoolean("strict")?"Input":"Adapt.",()->send("mode",i),unlocked&&!entry.getBoolean("active"));
@@ -136,19 +140,19 @@ public final class TimekeeperScreen extends Screen {
         int bar=creative()?w-20:(int)((w-20)*Math.min(1f,Math.max(0f,energy/100000f)));
         g.fill(left+10,top+37,left+10+bar,top+47,0xFF7530AA);
         g.drawCenteredString(font,creative()?"UNLIMITED ENERGY":energy+" / 100000 FE",left+w/2,top+38,0xFFFFFFFF);
-        String status=recording()?"RECORDING":running()?"ECHO ACTIVE":hasCurrent()?"RECORDING READY":"NO RECORDING";
+        String status=recording()?"RECORDING":running()?(state.getInt("pausedCount")>0?"ECHO ACTIVE / PAUSED":"ECHO ACTIVE"):hasCurrent()?"RECORDING READY":"NO RECORDING";
         if(state.getBoolean("otherRecording"))status="ANOTHER WATCH IS RECORDING";
         g.drawString(font,status,left+10,top+52,recording()?0xFFFF6C84:running()?0xFF7BE0AB:purple,false);
         g.drawString(font,state.getInt("steps")+" steps  |  "+state.getInt("activeCount")+" active echoes",left+10,top+65,grey,false);
         if(creative()){
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
-                CompoundTag t=saved().getCompound(i);int y=179+row*22;
+                CompoundTag t=saved().getCompound(i);int y=204+row*22;
                 
             }
             int max=Math.max(1,(saved().size()+rows-1)/rows);
             g.drawString(font,(page+1)+"/"+max+"   "+saved().size()+" saved",left+84,top+h-19,grey,false);
-        }else g.drawString(font,"Left-click to cycle. Right-click to manage.",left+10,top+155,grey,false);
+        }else g.drawString(font,"Left-click to cycle. Right-click to manage.",left+10,top+180,grey,false);
         super.render(g,mouseX,mouseY,partialTick);
         renderTintDropdown(g,mouseX,mouseY);
     }
