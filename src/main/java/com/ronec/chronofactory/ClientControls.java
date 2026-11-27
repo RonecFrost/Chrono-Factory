@@ -21,6 +21,9 @@ public final class ClientControls{
         if(mc.player==null){attackHeld=false;useHeld=false;sentAttack=false;sentUse=false;airTicks=0;return;}
         boolean recording=recording(mc);
         boolean eligible=recording&&mc.screen==null&&!ChronoFactory.watch(mc.player.getMainHandItem());
+        if(recording){int flags=0;if(mc.screen==null){if(mc.options.keyUp.isDown())flags|=StrictReplay.FORWARD;if(mc.options.keyDown.isDown())flags|=StrictReplay.BACK;if(mc.options.keyLeft.isDown())flags|=StrictReplay.LEFT;if(mc.options.keyRight.isDown())flags|=StrictReplay.RIGHT;if(mc.options.keyJump.isDown())flags|=StrictReplay.JUMP;if(mc.options.keyShift.isDown())flags|=StrictReplay.SNEAK;if(mc.options.keySprint.isDown())flags|=StrictReplay.SPRINT;if(eligible&&mc.options.keyUse.isDown())flags|=StrictReplay.USE;if(eligible&&mc.options.keyAttack.isDown())flags|=StrictReplay.ATTACK;}else flags|=StrictReplay.SCREEN;
+        if(eligible&&mc.options.keyDrop.isDown())flags|=StrictReplay.DROP;
+        PacketDistributor.sendToServer(new ChronoFactory.InputFrame(flags,mc.player.getInventory().selected,mc.player.getYRot(),mc.player.getXRot()));}
         input(true,eligible&&mc.options.keyUse.isDown());input(false,eligible&&mc.options.keyAttack.isDown());
         boolean air=recording&&mc.screen==null&&mc.options.keyAttack.isDown()&&!ChronoFactory.watch(mc.player.getMainHandItem())&&(mc.hitResult==null||mc.hitResult.getType()==net.minecraft.world.phys.HitResult.Type.MISS);
         if(air){if(airTicks++%4==0)PacketDistributor.sendToServer(ChronoFactory.AirSwing.INSTANCE);}else airTicks=0;

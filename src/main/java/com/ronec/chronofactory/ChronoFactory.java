@@ -101,6 +101,14 @@ public final class ChronoFactory {
         };
         public Type<HeldInput> type(){return TYPE;}
     }
+    public record InputFrame(int flags,int slot,float yaw,float pitch) implements CustomPacketPayload {
+        public static final Type<InputFrame> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"input_frame"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,InputFrame> CODEC=new StreamCodec<>(){
+            public InputFrame decode(RegistryFriendlyByteBuf b){return new InputFrame(b.readVarInt(),b.readVarInt(),b.readFloat(),b.readFloat());}
+            public void encode(RegistryFriendlyByteBuf b,InputFrame f){b.writeVarInt(f.flags());b.writeVarInt(f.slot());b.writeFloat(f.yaw());b.writeFloat(f.pitch());}
+        };
+        public Type<InputFrame> type(){return TYPE;}
+    }
     public record UiCommand(UUID key,String action,int index) implements CustomPacketPayload {
         public static final Type<UiCommand> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"ui_command"));
         public static final StreamCodec<RegistryFriendlyByteBuf,UiCommand> CODEC=new StreamCodec<>() {
@@ -118,7 +126,8 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("5");
+        var registrar=e.registrar("6");
+        registrar.playToServer(InputFrame.TYPE,InputFrame.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)rawInput(p,msg);}));
         registrar.playToServer(HeldInput.TYPE,HeldInput.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)inputEdge(p,msg);}));
         registrar.playToServer(AirSwing.TYPE,AirSwing.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)recordAirSwing(p);}));
         registrar.playToServer(Click.TYPE,Click.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) cycle(p);}));
@@ -185,34 +194,40 @@ public final class ChronoFactory {
         int useEpoch,attackTargetStart;
         BlockPos attackTarget;
         CompoundTag heldUse;
-        Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);}
+        final List<Integer> raw=new ArrayList<>();
+        final ListTag gui=new ListTag();
+        int rawFlags,rawSlot,rawLast=-100;
+        float rawYaw,rawPitch;
+        Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);rawSlot=p.getInventory().selected;rawYaw=p.getYRot();rawPitch=p.getXRot();}
         void closeUse(int end){
             if(heldUse==null)return;
             int start=heldUse.getInt("recordTick");int[] offsets=heldUse.getIntArray("useOffsets");
             int minimum=offsets.length==0?1:offsets[offsets.length-1]+1;
-            heldUse.putInt("duration",Math.max(minimum,Math.max(1,end-start)));
+            int lastClick=heldUse.getInt("lastClick");int finish=useDown?end:Math.min(end,lastClick+4);
+            if(heldUse.contains("releaseTick"))finish=heldUse.getInt("releaseTick");
+            heldUse.putInt("duration",Math.max(minimum,Math.max(1,finish-start)));
             heldUse=null;
         }
         boolean sameUse(CompoundTag a,CompoundTag b){
             return a.getLong("pos")==b.getLong("pos")&&a.getInt("face")==b.getInt("face")&&a.getString("block").equals(b.getString("block"))
                 &&a.getBoolean("sneak")==b.getBoolean("sneak")&&Objects.equals(a.get("item"),b.get("item"))
-                &&a.getInt("holdId")==b.getInt("holdId")
-                &&Math.abs(a.getDouble("hx")-b.getDouble("hx"))<.15&&Math.abs(a.getDouble("hy")-b.getDouble("hy"))<.15&&Math.abs(a.getDouble("hz")-b.getDouble("hz"))<.15;
+                &&a.getInt("holdId")==b.getInt("holdId");
         }
         void add(CompoundTag a){
+            if(!a.contains("recordTick"))a.putInt("recordTick",tick);
             if("use".equals(a.getString("type"))){
                 int at=a.getInt("recordTick");
-                if(heldUse!=null&&a.getInt("holdId")!=0&&sameUse(heldUse,a)){
+                if(heldUse!=null&&sameUse(heldUse,a)&&(a.getInt("holdId")!=0||at-heldUse.getInt("lastClick")<=8)){
                     int[] old=heldUse.getIntArray("useOffsets");int offset=Math.max(0,at-heldUse.getInt("recordTick"));
                     if(old.length<2400&&offset<=24000){
                         int[] offsets=Arrays.copyOf(old,old.length+1);offsets[old.length]=Math.max(offset,old[old.length-1]+1);
-                        heldUse.putIntArray("useOffsets",offsets);heldUse.putInt("duration",offsets[old.length]+1);return;
+                        heldUse.putIntArray("useOffsets",offsets);heldUse.putInt("duration",offsets[old.length]+1);heldUse.putInt("lastClick",at);return;
                     }
                 }
                 closeUse(at);
                 if(actions.size()>=MAX_ACTIONS)return;
-                a.putIntArray("useOffsets",new int[]{0});a.putInt("duration",1);actions.add(a);
-                if(useDown&&a.getInt("holdId")==useEpoch)heldUse=a;
+                a.putIntArray("useOffsets",new int[]{0});a.putInt("duration",1);a.putInt("lastClick",at);actions.add(a);
+                heldUse=a;
                 if(a.contains("releaseTick")){if(heldUse==a)closeUse(a.getInt("releaseTick"));else a.putInt("duration",Math.max(1,a.getInt("releaseTick")-at));}
             }else{
                 closeUse(tick);
@@ -253,7 +268,7 @@ public final class ChronoFactory {
         ItemStack s=find(p,r.watch);
         if(save&&!s.isEmpty()){
             if(r.actions.size()==1){CompoundTag idle=point(p,"wait");idle.putInt("ticks",Math.max(1,Math.min(1200,r.tick)));r.add(idle);}
-            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putBoolean("explicitPickup",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
+            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
         }
         restore(p);say(p,save&&!s.isEmpty()?"RECORDING SAVED ("+r.actions.size()+" steps). Left-click to summon the Echo.":"Recording cancelled; inventory restored.");
     }
@@ -290,11 +305,24 @@ public final class ChronoFactory {
         Vec3 v=e.getItemEntity().position();a.putDouble("ix",v.x);a.putDouble("iy",v.y);a.putDouble("iz",v.z);r.add(a);
         if(r.menuSeen)r.previous=snapshot(p);
     }
+    static void rawInput(ServerPlayer p,InputFrame frame){
+        Recording r=RECORDINGS.get(p.getUUID());if(r==null||!Float.isFinite(frame.yaw())||!Float.isFinite(frame.pitch()))return;
+        r.rawFlags=frame.flags()&2047;r.rawSlot=Math.max(0,Math.min(8,frame.slot()));r.rawYaw=frame.yaw()%360;r.rawPitch=Math.max(-90,Math.min(90,frame.pitch()));r.rawLast=r.tick;
+        boolean use=(r.rawFlags&StrictReplay.USE)!=0,attack=(r.rawFlags&StrictReplay.ATTACK)!=0;
+        if(use!=r.useDown)inputEdge(p,new HeldInput(true,use));
+        if(attack!=r.attackDown)inputEdge(p,new HeldInput(false,attack));
+    }
+    public static void rawGui(ServerPlayer p,int slot,int button,int click,boolean close){
+        if(p instanceof FakePlayer)return;Recording r=RECORDINGS.get(p.getUUID());
+        if(r==null||r.gui.size()>=4096)return;
+        CompoundTag event=new CompoundTag();event.putInt("tick",r.raw.size()/3);event.putInt("slot",slot);event.putInt("button",button);event.putInt("click",click);event.putBoolean("close",close);event.putBoolean("inventory",p.containerMenu==p.inventoryMenu);r.gui.add(event);
+    }
     static void inputEdge(ServerPlayer p,HeldInput edge){
         Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
         if(edge.use()){
             if(edge.down()&&!r.useDown){r.useDown=true;r.useEpoch++;if(r.useEpoch==0)r.useEpoch=1;}
             else if(!edge.down()&&r.useDown){
+                if(r.heldUse!=null)r.heldUse.putInt("releaseTick",r.tick);
                 r.useDown=false;
                 if(r.pendingUse!=null&&r.pendingUse.getInt("holdId")==r.useEpoch)r.pendingUse.putInt("releaseTick",r.tick);
                 r.closeUse(r.tick);
@@ -409,6 +437,9 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.get(p.getUUID());
         if(r!=null){
             if(!r.dimension.equals(p.level().dimension().location().toString())||find(p,r.watch).isEmpty()){finish(p,false);return;}
+            int flags=r.tick-r.rawLast<=10?r.rawFlags:0;
+            // Record the key state at every server tick, not only successful world actions.
+            r.raw.add(flags|(r.rawSlot<<12));r.raw.add(Float.floatToIntBits(r.rawYaw));r.raw.add(Float.floatToIntBits(r.rawPitch));
             if(r.container!=null){
                 if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;captureTransfers(p,r);}
                 else if(r.menuSeen){captureTransfers(p,r);r.container=null;r.menuSeen=false;r.bulkStart=-1;}
@@ -417,7 +448,7 @@ public final class ChronoFactory {
             // Sample every tick in the air, retaining the recorded jump arc and ledge descent.
             if(++r.tick%3==0||!p.onGround()||Math.abs(p.getY()-r.last.getDouble("y"))>.015){if(p.containerMenu==p.inventoryMenu)r.move(p);}
             if(r.tick==2){p.inventoryMenu.sendAllDataToRemote();}
-            if(r.actions.size()>=MAX_ACTIONS)finish(p,true);
+            if(r.actions.size()>=MAX_ACTIONS||r.raw.size()/3>=12000)finish(p,true);
         }
         for(int i=0;i<p.getInventory().getContainerSize();i++){
             ItemStack s=p.getInventory().getItem(i);if(s.getItem()==PERSONAL.get()&&energy(s)<CAPACITY)energy(s,energy(s)+10);
@@ -431,6 +462,7 @@ public final class ChronoFactory {
     }
     static void manifest(ServerPlayer p,ItemStack s,CompoundTag tl){
         ListTag actions=timeline(tl);if(actions.isEmpty()){say(p,"No recording available. Left-click to start recording.");return;}
+        if(tl.getBoolean("strict")&&tl.getIntArray("raw").length<3){say(p,"Strict mode requires a new input recording from version 0.4.0 or later.");return;}
         ServerLevel l=null;for(ServerLevel candidate:p.server.getAllLevels())if(candidate.dimension().location().toString().equals(tl.getString("dimension")))l=candidate;
         if(l==null||!l.hasChunkAt(BlockPos.containing(vec(actions.getCompound(0))))){say(p,"Recording start is not loaded.");return;}
         UUID key=id(s);if(active(p,key,tl.getUUID("id"))||(!creative(s)&&active(p,key,null)))return;
@@ -526,7 +558,8 @@ public final class ChronoFactory {
             if(!a.getUUID("id").equals(entity.loopId()))continue;
             ListTag actions=timeline(a.getCompound("timeline"));int i=a.getInt("index");
             String action=i>=0&&i<actions.size()?actions.getCompound(i).getString("type"):"transition";
-            if(i>=0&&i<actions.size()&&actions.getCompound(i).contains("duration"))action+=" "+String.format(java.util.Locale.ROOT,"%.1f/%.1fs",a.getInt("heldElapsed")/20.0,actions.getCompound(i).getInt("duration")/20.0);
+            if(a.getCompound("timeline").getBoolean("strict"))action="raw input "+a.getInt("rawIndex")+"/"+a.getCompound("timeline").getInt("rawTicks")+" ticks";
+            else if(i>=0&&i<actions.size()&&actions.getCompound(i).contains("duration"))action+=" "+String.format(java.util.Locale.ROOT,"%.1f/%.1fs",a.getInt("heldElapsed")/20.0,actions.getCompound(i).getInt("duration")/20.0);
             if(i>=0&&i<actions.size()&&actions.getCompound(i).getBoolean("bulkStart")&&!a.getCompound("timeline").getBoolean("strict"))action="deposit all";
             p.sendSystemMessage(Component.literal("[Chrono] "+a.getCompound("timeline").getString("name")+" | "+(a.getCompound("timeline").getBoolean("strict")?"Strict":"Parallel")+" | Cycle "+(a.getInt("cycles")+1)+" | Step "+Math.min(i+1,actions.size())+"/"+actions.size()+" ("+action+")"));
             p.sendSystemMessage(Component.literal("Status: "+(a.getString("reason").isEmpty()?"Running":a.getString("reason"))));
@@ -581,23 +614,24 @@ public final class ChronoFactory {
         // Migrate old alpha worlds: remove the previous armor-stand proxy.
         if(a.hasUUID("stand")){Entity old=l.getEntity(a.getUUID("stand"));if(old instanceof ArmorStand)old.discard();a.remove("stand");}
         EchoEntity echo=a.hasUUID("entity")&&l.getEntity(a.getUUID("entity")) instanceof EchoEntity en?en:null;
-        FakePlayer f=FakePlayerFactory.get(l,new GameProfile(a.getUUID("id"),"ChronoEcho"));f.getInventory().clearContent();f.getInventory().load(a.getList("inventory",Tag.TAG_COMPOUND));f.setPos(here.x,here.y,here.z);f.setOnGround(true);f.setYRot(position.getFloat("yaw"));f.setXRot(position.getFloat("pitch"));f.setShiftKeyDown(position.getBoolean("sneak"));
+        FakePlayer f=a.getCompound("timeline").getBoolean("strict")?StrictReplay.player(l,a.getUUID("id")):FakePlayerFactory.get(l,new GameProfile(a.getUUID("id"),"ChronoEcho"));f.getInventory().clearContent();f.getInventory().load(a.getList("inventory",Tag.TAG_COMPOUND));f.setPos(here.x,here.y,here.z);f.setOnGround(true);f.setYRot(position.getFloat("yaw"));f.setXRot(position.getFloat("pitch"));f.setShiftKeyDown(position.getBoolean("sneak"));
         if(a.getBoolean("dismiss")||(!watch.isEmpty()&&!a.getBoolean("creative")&&energy(watch)<=0)){
             for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack st=f.getInventory().getItem(i);if(!st.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,st.copy()));}
-            f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
+            if(f instanceof StrictReplay.MacroPlayer macro)StrictReplay.forget(macro,a);f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
         if(owner==null||watch.isEmpty()){a.putString("reason","Owner or Timekeeper unavailable");f.getInventory().clearContent();return false;}
         CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");ListTag actions=timeline(tl);if(actions.isEmpty()){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
         int color=tint(tl);
         // At the end of a timeline, fade out and reappear at the initial position.
         // Logical inventory belongs to the loop and is never regenerated by visual remanifestation.
-        if(a.getInt("index")>=actions.size()){
+        if(a.getInt("index")>=actions.size()||(strict&&a.getInt("rawIndex")>=tl.getIntArray("raw").length/3)){
             int fade=a.getInt("fade")+1;a.putInt("fade",fade);a.putString("reason","Loop complete - remanifesting");
             if(echo!=null)echo.visual(color,Math.max(0,24-fade*3),false,a.getFloat("walkPhase"),ItemStack.EMPTY,false,position.getFloat("pitch"));
             if(fade%2==0)particles(l,here,fade,color,position.getFloat("yaw"));
             if(fade>=8){
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");
+                if(f instanceof StrictReplay.MacroPlayer macro){StrictReplay.finishCycle(macro,a);a.put("inventory",f.getInventory().save(new ListTag()));}
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -613,6 +647,7 @@ public final class ChronoFactory {
             if(phase%2==0)particles(l,here,phase,color,position.getFloat("yaw"));
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-8);return false;
         }
+        if(strict){StrictReplay.step(l,a,tl,(StrictReplay.MacroPlayer)f,echo,watch);return false;}
         int index=a.getInt("index");CompoundTag action=actions.getCompound(index);String type=action.getString("type");Vec3 target=vec(action);boolean done=false,working=false,walking=false,swung=false;
         String reason="Waiting: "+type;
         ItemStack wanted=template(action,l);
@@ -708,7 +743,11 @@ public final class ChronoFactory {
             }else if("use".equals(type)){
                 int elapsed=a.getInt("heldElapsed"),cursor=a.getInt("useCursor");
                 int duration=Math.max(1,action.getInt("duration"));
-                int[] offsets=action.getIntArray("useOffsets");if(offsets.length==0)offsets=new int[]{0};
+                // Create cranks need recurring use calls even if an input event was lost.
+                // Use the measured duration, never invent a longer hold.
+                boolean crank=action.getString("block").equals("create:hand_crank")||action.getString("block").equals("create:copper_valve_handle");
+                int[] offsets=action.getIntArray("useOffsets");
+                if(crank&&duration>4){offsets=new int[(duration+3)/4];for(int c=0;c<offsets.length;c++)offsets[c]=c*4;}if(offsets.length==0)offsets=new int[]{0};
                 duration=Math.max(duration,offsets[offsets.length-1]+1);
                 boolean advance=true;
                 if(cursor<offsets.length&&elapsed>=offsets[cursor]){

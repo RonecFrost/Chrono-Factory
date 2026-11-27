@@ -123,7 +123,7 @@ public final class TimekeeperScreen extends Screen {
         g.fill(left,top,left+w,top+h,0xFF17131D);
         g.fill(left,top,left+w,top+3,0xFFAB4DE3);
         g.drawString(font,creative()?"CREATIVE PERSONAL TIMEKEEPER":"PERSONAL TIMEKEEPER",left+10,top+10,purple,false);
-        g.drawString(font,state.getBoolean("strict")?"STRICT TIMELINE":"PARALLEL TIMELINE",left+10,top+23,grey,false);
+        g.drawString(font,state.getBoolean("strict")?"STRICT INPUT MACRO":"PARALLEL TIMELINE",left+10,top+23,grey,false);
         g.fill(left+10,top+37,left+w-10,top+47,0xFF30243A);
         int energy=state.getInt("energy");
         int bar=creative()?w-20:(int)((w-20)*Math.min(1f,Math.max(0f,energy/100000f)));

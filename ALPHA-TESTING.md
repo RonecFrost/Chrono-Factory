@@ -1,4 +1,4 @@
-# Chrono Factory 0.3.1-alpha
+# Chrono Factory 0.4.0-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -27,3 +27,9 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - New recordings store held right-click duration in server ticks and actual repeated block interaction offsets. Replays preserve the timing (not extra fabricated clicks) in Strict and Parallel. Missing targets/tools pause the active clock. Mining holds have a minimum recorded duration when start/break events are available. Air-swing final sample is shortened when released.
 - Test Create hand crank: record holding right-click continuously for 20 seconds, release, then record another action. Right-click Echo to inspect elapsed/total time and interaction count. Check both modes and brief taps. Re-record old timelines to capture duration; old recordings still load as one-tick uses.
 - No generic in-air held item use or simultaneous movement/use playback yet. Server tick time slows if TPS drops. Create has its own short spin-down time. No hard Create dependency.
+
+## 0.4.0 Strict input engine
+- Strict uses per-server-tick movement, look, hotbar, attack, use, jump, sprint, sneak, drop and screen input samples. No semantic prerequisite waiting. GUI slot clicks use the real server menu and current stack; a wrong or empty slot is never corrected. New recordings contain both streams. Re-record any older timeline used in Strict.
+- Parallel retains semantic matching; crank/valve holds replay at four-tick intervals over the measured duration. Re-record crank loops. Verify both modes in-game.
+- Strict movement is collision/gravity-aware, approximate vanilla physics; not a perfect client simulation. Entity attacks, offhand swapping, custom GUI packets/buttons, and exact item-use progression are not implemented. Recorded ordinary container clicks are replayed server-side. Menu state across unload/restart needs further testing. Input capture limited to 12,000 ticks (~10 minutes at 20 TPS).
+- Releases include version, build number and UTC build date. Use disposable test worlds.
