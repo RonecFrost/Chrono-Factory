@@ -1,4 +1,4 @@
-# Chrono Factory 0.7.1-alpha
+# Chrono Factory 0.7.2-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -81,3 +81,8 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Test in disposable world: throw five items with held RMB, record turning during bow draw, crossbow load/fire, arrow recovery, enchant each row with insufficient/sufficient levels, preconfigured and edited Ars books. Build is not gameplay verification.
 
 - Adaptive arrow recovery also runs while stationary. For a non-bulk deposit after an enchantment, the recording's observed output is resolved to the actual newly enchanted stack for that cycle. Bulk deposits still empty actual inventory and may use overflow placement if the recorded enchantment differs. Old block-use spell actions can fall back to the native caster after a rejected block interaction.
+
+## 0.7.2 timing, workstations, offhand and speech
+- Adaptive block uses now preserve time between distinct target interactions, including pillar building. Crossbow direction synchronizes head/body/current/previous rotations before native use. Re-record.
+- Anvil and grindstone record individual successful result-slot transactions (actual input quantities, output, name, level cost). Replay uses real workstation slots and native result take, checks legal result before spending levels. Multi-stage repair/enchant is recorded as separate transactions. Generic menus retain exact before/after ledger and native click path; arbitrary recorded outputs are not fabricated. Re-record. Unnamed enchanted damageable gear matches by item and enchanted status; named equipment requires name and enchanted books retain exact enchantments. Native results vary with actual inputs.
+- F swap and main/offhand use events recorded; renderer shows both hands and chooses swing arm, shield pose experimental. Echo inventory uses opaque contrasting slots. Chat records messages, Adaptive pauses briefly then emits labelled system chat; Input uses recorded event timing. Commands execute at Echo via fake-player source with current online owner's permissions, no command execution offline, no management-command recording. Some commands requiring a real connected player may fail. Re-record all new actions.

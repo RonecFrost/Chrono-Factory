@@ -19,6 +19,9 @@ public final class EchoEntity extends PathfinderMob {
     static final EntityDataAccessor<Boolean> WALK=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.BOOLEAN);
     static final EntityDataAccessor<Float> WALK_PHASE=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.FLOAT);
     static final EntityDataAccessor<ItemStack> HELD=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.ITEM_STACK);
+    static final EntityDataAccessor<ItemStack> OFF=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.ITEM_STACK);
+    static final EntityDataAccessor<Boolean> OFF_SWING=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.BOOLEAN);
+    static final EntityDataAccessor<Boolean> BLOCKING=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.BOOLEAN);
     static final EntityDataAccessor<Boolean> SWING=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.BOOLEAN);
     static final EntityDataAccessor<Float> LOOK=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.FLOAT);
     // Client-only presentation state: authoritative action execution never depends on these.
@@ -28,7 +31,7 @@ public final class EchoEntity extends PathfinderMob {
     private boolean swingInProgress;
     public EchoEntity(EntityType<? extends PathfinderMob> type,Level level){super(type,level);setNoAi(true);setNoGravity(true);setInvulnerable(true);setPersistenceRequired();noPhysics=true;}
     @Override protected void defineSynchedData(SynchedEntityData.Builder b){
-        super.defineSynchedData(b);b.define(OWNER,"");b.define(LOOP,"");b.define(TINT,0);b.define(PHASE,0);b.define(WALK,false);b.define(WALK_PHASE,0f);b.define(HELD,ItemStack.EMPTY);b.define(SWING,false);b.define(LOOK,0f);
+        super.defineSynchedData(b);b.define(OWNER,"");b.define(LOOP,"");b.define(TINT,0);b.define(PHASE,0);b.define(WALK,false);b.define(WALK_PHASE,0f);b.define(HELD,ItemStack.EMPTY);b.define(OFF,ItemStack.EMPTY);b.define(OFF_SWING,false);b.define(BLOCKING,false);b.define(SWING,false);b.define(LOOK,0f);
     }
     void setIdentity(UUID owner,UUID loop){entityData.set(OWNER,owner.toString());entityData.set(LOOP,loop.toString());}
     private UUID readId(EntityDataAccessor<String> key){try{return UUID.fromString(entityData.get(key));}catch(IllegalArgumentException ex){return new UUID(0,0);}}
@@ -37,6 +40,11 @@ public final class EchoEntity extends PathfinderMob {
     void visual(int tint,int phase,boolean walking,float walkPhase,ItemStack held,boolean swing,float pitch){
         entityData.set(TINT,tint);entityData.set(PHASE,phase);entityData.set(WALK,walking);entityData.set(WALK_PHASE,walkPhase);entityData.set(HELD,held.copyWithCount(held.isEmpty()?0:1));entityData.set(SWING,swing);entityData.set(LOOK,pitch);
     }
+    void hands(ItemStack off,boolean offSwing,boolean blocking){entityData.set(OFF,off.copy());entityData.set(OFF_SWING,offSwing);entityData.set(BLOCKING,blocking);}
+    ItemStack visualOff(){return entityData.get(OFF);}
+    boolean offSwing(){return entityData.get(OFF_SWING);}
+    boolean blockingVisual(){return entityData.get(BLOCKING);}
+    @Override public HumanoidArm getMainArm(){return HumanoidArm.RIGHT;}
     int tint(){return entityData.get(TINT);}
     int phase(){return entityData.get(PHASE);}
     boolean walking(){return entityData.get(WALK);}

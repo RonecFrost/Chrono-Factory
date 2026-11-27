@@ -31,8 +31,13 @@ public abstract class ContainerInputMixin {
     }
     @Inject(method="handlePlayerAction",at=@At("HEAD"))
     private void chronoRelease(net.minecraft.network.protocol.game.ServerboundPlayerActionPacket packet,CallbackInfo ci){
-        if(player.server.isSameThread()&&packet.getAction()==net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM)ChronoFactory.nativeRelease(player);
+        if(player.server.isSameThread()){
+            if(packet.getAction()==net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM)ChronoFactory.nativeRelease(player);
+            else if(packet.getAction()==net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.SWAP_ITEM_WITH_OFFHAND)ChronoFactory.nativeSwap(player);
+        }
     }
+    @Inject(method="handleRenameItem",at=@At("HEAD"))
+    private void chronoRename(net.minecraft.network.protocol.game.ServerboundRenameItemPacket packet,CallbackInfo ci){if(player.server.isSameThread())ChronoFactory.nativeRename(player,packet.getName());}
     @Inject(method="handleContainerClose",at=@At("HEAD"))
     private void chronoClose(ServerboundContainerClosePacket packet,CallbackInfo ci){
         if(player.server.isSameThread())ChronoFactory.rawGui(player,0,0,0,true);

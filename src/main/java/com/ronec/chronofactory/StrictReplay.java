@@ -66,7 +66,8 @@ public final class StrictReplay {
     static boolean recordedUse(ServerLevel l,MacroPlayer f,CompoundTag event){
         if(f.containerMenu!=f.inventoryMenu)return false;
         f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));
-        f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));if(ArsSupport.book(f.getMainHandItem())&&event.contains("spellSlot"))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));f.setShiftKeyDown(event.getBoolean("sneak"));
+        ItemActions.aim(f,event.getFloat("yaw"),event.getFloat("pitch"));if(ArsSupport.book(f.getMainHandItem())&&event.contains("spellSlot"))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));f.setShiftKeyDown(event.getBoolean("sneak"));
+        InteractionHand hand=event.getBoolean("offhand")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND;
         BlockHitResult hit=ChronoFactory.aimedBlock(f);
         // A tiny difference in frame timing can miss a chest edge. Only recover
         // the recorded hit when the Echo is still at the demonstrated position
@@ -81,9 +82,9 @@ public final class StrictReplay {
             }
         }
         if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos())){
-            InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,hit);return result.consumesAction();
+            InteractionResult result=f.gameMode.useItemOn(f,l,f.getItemInHand(hand),hand,hit);return result.consumesAction();
         }
-        if(!f.getMainHandItem().isEmpty())return f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND).consumesAction();
+        if(!f.getItemInHand(hand).isEmpty())return f.gameMode.useItem(f,l,f.getItemInHand(hand),hand).consumesAction();
         return false;
     }
     static void step(ServerLevel l,CompoundTag a,CompoundTag tl,MacroPlayer f,EchoEntity echo,ItemStack watch){
@@ -108,20 +109,23 @@ public final class StrictReplay {
         if(l.hasChunkAt(BlockPos.containing(here.add(desired))))f.move(MoverType.SELF,desired);
         Vec3 actual=f.position().subtract(here);
         boolean swung=false,hadRecordedUse=false,hadRecordedAttack=false,hadRecordedDrop=false;String task="Idle";
-        boolean timed=tl.getBoolean("timedItems");
+        boolean timed=tl.getBoolean("timedItems"),offSwing=false;
         // Record actual server interaction events and GUI clicks in one ordered
         // stream. This avoids relying on a held-key frame to open a chest.
         ListTag gui=tl.getList("gui",Tag.TAG_COMPOUND);int cursor=a.getInt("guiIndex");
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
             CompoundTag event=gui.getCompound(cursor++);
-            if("ars_edit".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ArsSupport.edit(f.getMainHandItem(),event,l);task="Configure spell";}
-            else if("attack_entity".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));ItemActions.attack(f);hadRecordedAttack=true;swung=true;task="Attack entity";}
+            if("speech".equals(event.getString("kind"))){EchoSpeech.post(l,f,a,tl,event);task="Chat";}
+            else if("swap_hands".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ItemActions.swap(f);task="Swap hands";}
+            else if("rename_anvil".equals(event.getString("kind"))){if(f.containerMenu instanceof AnvilMenu anvil)anvil.setItemName(event.getString("name"));task="Rename item";}
+            else if("ars_edit".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ArsSupport.edit(f.getMainHandItem(),event,l);task="Configure spell";}
+            else if("attack_entity".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ItemActions.aim(f,event.getFloat("yaw"),event.getFloat("pitch"));ItemActions.attack(f);hadRecordedAttack=true;swung=true;task="Attack entity";}
             else if("item_release".equals(event.getString("kind"))){ItemActions.releaseInput(l,f,a,event);swung=true;task="Release item";}
-            else if("drop_item".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));ItemStack st=f.getMainHandItem();if(!st.isEmpty()){var drop=f.drop(st.split(Math.min(st.getCount(),event.getInt("count"))),false);if(drop!=null)drop.setDeltaMovement(event.getDouble("vx"),event.getDouble("vy"),event.getDouble("vz"));}hadRecordedDrop=true;task="Drop item";}
-            else if("item_use".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.cast(l,f,a,f.getMainHandItem(),event.getInt("spellSlot"));else ItemActions.beginInput(l,f,a);hadRecordedUse=true;delay=4;swung=true;task="Use item";}
+            else if("drop_item".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ItemActions.aim(f,event.getFloat("yaw"),event.getFloat("pitch"));ItemStack st=f.getMainHandItem();if(!st.isEmpty()){var drop=f.drop(st.split(Math.min(st.getCount(),event.getInt("count"))),false);if(drop!=null)drop.setDeltaMovement(event.getDouble("vx"),event.getDouble("vy"),event.getDouble("vz"));}hadRecordedDrop=true;task="Drop item";}
+            else if("item_use".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ItemActions.aim(f,event.getFloat("yaw"),event.getFloat("pitch"));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.cast(l,f,a,f.getMainHandItem(),event.getInt("spellSlot"));else ItemActions.beginInput(l,f,a,event.getBoolean("offhand")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND);offSwing=event.getBoolean("offhand");hadRecordedUse=true;delay=4;swung=true;task="Use item";}
             else if("button".equals(event.getString("kind"))){if(f.containerMenu!=f.inventoryMenu&&f.containerMenu.stillValid(f))f.containerMenu.clickMenuButton(f,event.getInt("button"));task="Select recipe";}
-            else if("use".equals(event.getString("kind"))){recordedUse(l,f,event);hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
+            else if("use".equals(event.getString("kind"))){recordedUse(l,f,event);offSwing=event.getBoolean("offhand");hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
             else{clickGui(f,event);task=event.getBoolean("close")?"Close inventory":"Click slot "+event.getInt("slot");}
         }
         a.putInt("guiIndex",cursor);
@@ -159,6 +163,7 @@ public final class StrictReplay {
         a.putString("strictTask",task);
         if(moving)a.putFloat("walkPhase",a.getFloat("walkPhase")+(float)actual.horizontalDistance()*5);
         echo.setPos(now.x,now.y,now.z);echo.setYRot(yaw);echo.setXRot(pitch);echo.setShiftKeyDown((flags&SNEAK)!=0);
+        echo.hands(f.getOffhandItem(),offSwing||a.getBoolean("strictHeldOff")&&a.contains("strictHeldTicks"),a.contains("strictHeldTicks")&&f.getItemInHand(a.getBoolean("strictHeldOff")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND).is(net.minecraft.world.item.Items.SHIELD));
         echo.visual(ChronoFactory.tint(tl),24,moving,a.getFloat("walkPhase"),f.getMainHandItem(),swung,pitch);
         a.putInt("rawIndex",tick+1);a.putString("reason",String.format(Locale.ROOT,"Strict input playback %.2f / %.2f s", (tick+1)/20.0,frames.length/60.0));
         saveCursor(f,a);a.put("inventory",f.getInventory().save(new ListTag()));f.getInventory().clearContent();

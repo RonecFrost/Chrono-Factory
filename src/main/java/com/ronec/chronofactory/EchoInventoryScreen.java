@@ -18,8 +18,8 @@ public final class EchoInventoryScreen extends AbstractContainerScreen<EchoInven
     void update(CompoundTag data){info=data;}
     @Override protected void containerTick(){super.containerTick();if(++poll%10==0)PacketDistributor.sendToServer(new ChronoFactory.UiCommand(menu.key,"inspect",0));}
     @Override protected void renderBg(GuiGraphics g,float partial,int mx,int my){
-        g.fill(leftPos-1,topPos-1,leftPos+imageWidth+1,topPos+imageHeight+1,0xFF503067);g.fill(leftPos,topPos,leftPos+imageWidth,topPos+imageHeight,0xFF17131D);g.fill(leftPos,topPos,leftPos+imageWidth,topPos+3,0xFFAB4DE3);
-        for(var slot:menu.slots){int x=leftPos+slot.x,y=topPos+slot.y;g.fill(x-1,y-1,x+17,y+17,0xFF5A4569);g.fill(x,y,x+16,y+16,0xFF2C2335);}
+        g.fill(leftPos-1,topPos-1,leftPos+imageWidth+1,topPos+imageHeight+1,0xFF73578D);g.fill(leftPos,topPos,leftPos+imageWidth,topPos+imageHeight,0xFF30263B);g.fill(leftPos+5,topPos+57,leftPos+imageWidth-5,topPos+141,0xFF554765);g.fill(leftPos+5,topPos+157,leftPos+imageWidth-5,topPos+238,0xFF554765);g.fill(leftPos,topPos,leftPos+imageWidth,topPos+3,0xFFAB4DE3);
+        for(var slot:menu.slots){int x=leftPos+slot.x,y=topPos+slot.y;g.fill(x-1,y-1,x+17,y+17,0xFFB0A4BE);g.fill(x,y,x+16,y+16,0xFF776A85);g.fill(x,y,x+16,y+1,0xFF40354B);g.fill(x,y,x+1,y+16,0xFF40354B);}
     }
     @Override protected void renderLabels(GuiGraphics g,int mx,int my){
         String name=info.getString("name");g.drawString(font,font.plainSubstrByWidth(name.isEmpty()?"TEMPORAL ECHO":name,imageWidth-18),9,9,0xFFBB86FC,false);
@@ -30,6 +30,6 @@ public final class EchoInventoryScreen extends AbstractContainerScreen<EchoInven
         g.drawString(font,"Your inventory",9,148,0xFFBDB1C8,false);
         g.drawString(font,"Armor",181,51,0xFFBDB1C8,false);g.drawString(font,"Offhand",181,105,0xFFBDB1C8,false);
     }
-    @Override public void render(GuiGraphics g,int mx,int my,float partial){renderBackground(g,mx,my,partial);super.render(g,mx,my,partial);renderTooltip(g,mx,my);}
-    @Override public void renderBackground(GuiGraphics g,int mx,int my,float partial){g.fill(0,0,width,height,0xB0000000);}
+    @Override public void render(GuiGraphics g,int mx,int my,float partial){super.render(g,mx,my,partial);renderTooltip(g,mx,my);}
+    @Override public void renderBackground(GuiGraphics g,int mx,int my,float partial){g.fill(0,0,width,height,0x60000000);}
 }

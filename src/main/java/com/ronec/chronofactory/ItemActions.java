@@ -23,10 +23,12 @@ final class ItemActions{
         CompoundTag action=r.itemHold;
         int duration=Math.max(1,p.getUseItem().getUseDuration(p)-p.getUseItemRemainingTicks());
         action.putInt("duration",duration);action.putFloat("releaseYaw",p.getYRot());action.putFloat("releasePitch",p.getXRot());
-        if(r.gui.size()<4096){CompoundTag raw=ChronoFactory.point(p,"item_release");raw.putString("kind","item_release");raw.putInt("tick",r.raw.size()/3);raw.putInt("duration",duration);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
+        if(r.gui.size()<4096){CompoundTag raw=ChronoFactory.point(p,"item_release");raw.putString("kind","item_release");raw.putInt("tick",r.raw.size()/3);raw.putBoolean("offhand",p.getUsedItemHand()==InteractionHand.OFF_HAND);raw.putInt("duration",duration);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
         r.itemHold=null;
     }
-    static void record(ServerPlayer p,ChronoFactory.Recording r,ItemStack stack){
+    static void aim(FakePlayer f,float yaw,float pitch){f.setYRot(yaw);f.setXRot(pitch);f.setYHeadRot(yaw);f.setYBodyRot(yaw);f.yRotO=yaw;f.xRotO=pitch;f.yHeadRotO=yaw;}
+    static void swap(FakePlayer f){ItemStack a=f.getMainHandItem(),b=f.getOffhandItem();f.setItemInHand(InteractionHand.MAIN_HAND,b);f.setItemInHand(InteractionHand.OFF_HAND,a);f.stopUsingItem();}
+    static void record(ServerPlayer p,ChronoFactory.Recording r,ItemStack stack,InteractionHand hand){
         if(stack.isEmpty())return;
         // A block-use event may precede the item fallback in the same tick.
         // Retain only the actual item-use path when the menu did not open.
@@ -41,7 +43,7 @@ final class ItemActions{
         }
         close(p,r);r.move(p);CompoundTag a=ChronoFactory.point(p,"item_use");
         a.putInt("itemGap",r.lastItemTick<0?0:Math.max(1,r.tick-r.lastItemTick));r.lastItemTick=r.tick;
-        a.put("item",stack.copyWithCount(1).save(p.registryAccess()));a.putInt("duration",1);a.putBoolean("held",stack.getUseDuration(p)>0);a.putInt("spellSlot",ArsSupport.slot(stack));r.add(a);
+        a.putBoolean("offhand",hand==InteractionHand.OFF_HAND);a.put("item",stack.copyWithCount(1).save(p.registryAccess()));a.putInt("duration",1);a.putBoolean("held",stack.getUseDuration(p)>0);a.putInt("spellSlot",ArsSupport.slot(stack));r.add(a);
         if(a.getBoolean("held"))r.itemHold=a;
         if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","item_use");raw.putInt("tick",r.raw.size()/3);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
     }
@@ -58,50 +60,53 @@ final class ItemActions{
         var block=ChronoFactory.aimedBlock(f);if(block.getType()!=HitResult.Type.MISS&&eye.distanceToSqr(block.getLocation())<eye.distanceToSqr(hit.getLocation()))return false;
         f.attack(hit.getEntity());return true;
     }
-    static boolean beginInput(ServerLevel l,FakePlayer f,CompoundTag job){
+    static boolean beginInput(ServerLevel l,FakePlayer f,CompoundTag job){return beginInput(l,f,job,InteractionHand.MAIN_HAND);}
+    static boolean beginInput(ServerLevel l,FakePlayer f,CompoundTag job,InteractionHand hand){
         if(job.contains("strictHeldTicks"))return true;
-        ItemStack current=f.getMainHandItem();if(current.isEmpty())return false;
-        InteractionResult result=f.gameMode.useItem(f,l,current,InteractionHand.MAIN_HAND);
+        ItemStack current=f.getItemInHand(hand);if(current.isEmpty())return false;
+        InteractionResult result=f.gameMode.useItem(f,l,current,hand);
         if(result.consumesAction()&&f.isUsingItem()){
-            job.putInt("strictHeldTicks",0);job.putInt("strictHeldSlot",f.getInventory().selected);
-            job.putString("strictHeldItem",net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(f.getMainHandItem().getItem()).toString());
+            job.putInt("strictHeldTicks",0);job.putBoolean("strictHeldOff",hand==InteractionHand.OFF_HAND);job.putInt("strictHeldSlot",f.getInventory().selected);
+            job.putString("strictHeldItem",net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(f.getItemInHand(hand).getItem()).toString());
         }
         f.stopUsingItem();return result.consumesAction();
     }
     static void releaseInput(ServerLevel l,FakePlayer f,CompoundTag job,CompoundTag event){
         if(!job.contains("strictHeldTicks"))return;
-        f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));
+        aim(f,event.getFloat("yaw"),event.getFloat("pitch"));
         job.putInt("strictHeldTicks",event.getInt("duration"));tickInput(l,f,job,false);
     }
     static void tickInput(ServerLevel l,FakePlayer f,CompoundTag job,boolean down){
         if(!job.contains("strictHeldTicks"))return;
-        int slot=job.getInt("strictHeldSlot");ItemStack stack=f.getInventory().getItem(slot);
-        if(slot!=f.getInventory().selected||stack.isEmpty()||!net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(job.getString("strictHeldItem"))){
+        int slot=job.getInt("strictHeldSlot");InteractionHand hand=job.getBoolean("strictHeldOff")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND;ItemStack stack=f.getItemInHand(hand);
+        if((hand==InteractionHand.MAIN_HAND&&slot!=f.getInventory().selected)||stack.isEmpty()||!net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(job.getString("strictHeldItem"))){
             job.remove("strictHeldTicks");job.remove("strictHeldItem");return;
         }
         int elapsed=job.getInt("strictHeldTicks"),full=stack.getUseDuration(f),remaining=Math.max(0,full-elapsed);
         if(down&&remaining>0){elapsed++;remaining--;job.putInt("strictHeldTicks",elapsed);stack.onUseTick(l,f,remaining);}
         if(!down||remaining==0){
-            if(remaining==0&&!stack.useOnRelease())f.setItemInHand(InteractionHand.MAIN_HAND,stack.finishUsingItem(l,f));
+            if(remaining==0&&!stack.useOnRelease())f.setItemInHand(hand,stack.finishUsingItem(l,f));
             else stack.releaseUsing(l,f,remaining);
             f.stopUsingItem();job.remove("strictHeldTicks");job.remove("strictHeldItem");
         }
     }
     static Outcome perform(ServerLevel l,FakePlayer f,CompoundTag job,CompoundTag action){
         ItemStack wanted=ChronoFactory.template(action,l);
-        if(!ChronoFactory.equip(f,wanted))return new Outcome(false,false,"Missing required item: "+ChronoFactory.itemName(wanted));
-        f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+        InteractionHand hand=action.getBoolean("offhand")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND;
+        if(!ChronoFactory.equipHand(f,wanted,hand))return new Outcome(false,false,"Missing required item: "+ChronoFactory.itemName(wanted));
+        aim(f,action.getFloat("yaw"),action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
         if("ars_edit".equals(action.getString("type"))){boolean ok=ArsSupport.edit(f.getMainHandItem(),action,l);return new Outcome(ok,ok,ok?"Spell configured":"Cannot configure Ars spell");}
         if("attack_entity".equals(action.getString("type"))){attack(f);return new Outcome(true,true,"Attacked in recorded direction");}
-        ItemStack current=f.getMainHandItem();if(ArsSupport.book(current))ArsSupport.select(current,action.getInt("spellSlot"));
+        ItemStack current=f.getItemInHand(hand);if(ArsSupport.book(current))ArsSupport.select(current,action.getInt("spellSlot"));
         int elapsed=job.getInt("heldElapsed"),duration=Math.max(1,action.getInt("duration"));boolean held=action.getBoolean("held");
         int gap=action.contains("itemGap")?action.getInt("itemGap"):4;
         if(!job.getBoolean("itemStarted")&&job.contains("lastItemClock")&&job.getInt("playClock")-job.getInt("lastItemClock")<gap)return new Outcome(false,true,"Waiting for recorded use interval");
+        if(ArsSupport.book(current)&&hand==InteractionHand.OFF_HAND){InteractionResult result=f.gameMode.useItem(f,l,current,hand);ArsSupport.saveMana(f,job);if(result.consumesAction())job.putInt("lastItemClock",job.getInt("playClock"));return new Outcome(result.consumesAction(),result.consumesAction(),"Offhand spell use");}
         if(!held||ArsSupport.book(current)){
             if(ArsSupport.book(current)){
                 Outcome cast=ArsSupport.cast(l,f,job,current,action.getInt("spellSlot"));if(cast.done())job.putInt("lastItemClock",job.getInt("playClock"));return cast;
             }
-            InteractionResult result=f.gameMode.useItem(f,l,current,InteractionHand.MAIN_HAND);
+            InteractionResult result=f.gameMode.useItem(f,l,current,hand);
             if(result.consumesAction())job.putInt("lastItemClock",job.getInt("playClock"));
             ArsSupport.saveMana(f,job);return new Outcome(result.consumesAction(),result.consumesAction(),result.consumesAction()?"Used item":"Item use unavailable: "+ChronoFactory.itemName(current));
         }
@@ -110,7 +115,7 @@ final class ItemActions{
         int full=current.getUseDuration(f);
         if(full<=0)return new Outcome(false,false,"Item no longer supports held use");
         if(!job.getBoolean("itemStarted")){
-            InteractionResult result=f.gameMode.useItem(f,l,current,InteractionHand.MAIN_HAND);
+            InteractionResult result=f.gameMode.useItem(f,l,current,hand);
             if(!result.consumesAction())return new Outcome(false,false,"Cannot begin held item");
             job.putInt("lastItemClock",job.getInt("playClock"));
             if(!f.isUsingItem())return new Outcome(true,true,"Used item without charge");
@@ -119,8 +124,8 @@ final class ItemActions{
         elapsed++;job.putInt("heldElapsed",elapsed);
         int remain=Math.max(0,full-elapsed);current.onUseTick(l,f,remain);
         if(elapsed>=duration||remain==0){
-            if(action.contains("releaseYaw")){f.setYRot(action.getFloat("releaseYaw"));f.setXRot(action.getFloat("releasePitch"));}
-            if(remain==0&&!current.useOnRelease())f.setItemInHand(InteractionHand.MAIN_HAND,current.finishUsingItem(l,f));
+            if(action.contains("releaseYaw")){aim(f,action.getFloat("releaseYaw"),action.getFloat("releasePitch"));}
+            if(remain==0&&!current.useOnRelease())f.setItemInHand(hand,current.finishUsingItem(l,f));
             else current.releaseUsing(l,f,remain);
             f.stopUsingItem();ArsSupport.saveMana(f,job);return new Outcome(true,true,"Released held item");
         }

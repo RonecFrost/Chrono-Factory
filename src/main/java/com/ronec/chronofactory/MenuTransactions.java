@@ -7,17 +7,18 @@ import net.minecraft.world.inventory.*;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 final class MenuTransactions{
-    static void begin(ServerPlayer p,ChronoFactory.Recording r,CompoundTag use){r.transaction=use.copy();r.transaction.put("clicks",new ListTag());r.transactionBefore=ChronoFactory.snapshot(p);r.transactionLevels=p.experienceLevel;}
+    static Map<String,ItemStack> exactSnapshot(ServerPlayer p){Map<String,ItemStack> out=new HashMap<>();for(int k=0;k<41;k++){ItemStack st=p.getInventory().getItem(k);if(st.isEmpty()||ChronoFactory.watch(st))continue;String key=net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(st.getItem())+":"+st.copyWithCount(1).getComponentsPatch();out.compute(key,(a,b)->{if(b==null)return st.copy();b.grow(st.getCount());return b;});}return out;}
+    static void begin(ServerPlayer p,ChronoFactory.Recording r,CompoundTag use){r.transaction=use.copy();r.transaction.put("clicks",new ListTag());r.transactionBefore=exactSnapshot(p);r.transactionLevels=p.experienceLevel;}
     static void cancelUnopened(ChronoFactory.Recording r){if(r.transaction!=null&&!r.transaction.getBoolean("opened")){r.transaction=null;r.transactionBefore=null;}}
     static void tick(ServerPlayer p,ChronoFactory.Recording r){
         if(r.transaction==null)return;
-        if(p.containerMenu!=p.inventoryMenu){r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu)r.transaction.putBoolean("enchantMenu",true);return;}
+        if(p.containerMenu!=p.inventoryMenu){r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu||p.containerMenu instanceof AnvilMenu||p.containerMenu instanceof GrindstoneMenu)r.transaction.putBoolean("enchantMenu",true);return;}
         if(r.transaction.getBoolean("opened"))finish(p,r);
         else if(r.tick>r.transaction.getInt("recordTick")){CompoundTag action=r.transaction;r.transaction=null;r.transactionBefore=null;action.remove("clicks");r.add(action);}
     }
     static void click(ServerPlayer p,ChronoFactory.Recording r,int slot,int button,int click){
         if(r.transaction==null||p.containerMenu==p.inventoryMenu)return;
-        r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu)r.transaction.putBoolean("enchantMenu",true);
+        r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu||p.containerMenu instanceof AnvilMenu||p.containerMenu instanceof GrindstoneMenu)r.transaction.putBoolean("enchantMenu",true);
         ListTag clicks=r.transaction.getList("clicks",Tag.TAG_COMPOUND);if(clicks.size()>=512)return;
         CompoundTag a=new CompoundTag();a.putInt("slot",slot);a.putInt("button",button);a.putInt("click",click);
         if(slot>=0&&slot<p.containerMenu.slots.size()){
@@ -30,14 +31,14 @@ final class MenuTransactions{
     }
     static void button(ServerPlayer p,ChronoFactory.Recording r,int button){
         if(r.transaction==null||p.containerMenu==p.inventoryMenu)return;
-        r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu)r.transaction.putBoolean("enchantMenu",true);ListTag clicks=r.transaction.getList("clicks",Tag.TAG_COMPOUND);if(clicks.size()>=512)return;
+        r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu||p.containerMenu instanceof AnvilMenu||p.containerMenu instanceof GrindstoneMenu)r.transaction.putBoolean("enchantMenu",true);ListTag clicks=r.transaction.getList("clicks",Tag.TAG_COMPOUND);if(clicks.size()>=512)return;
         CompoundTag a=new CompoundTag();a.putBoolean("menuButton",true);a.putInt("button",button);clicks.add(a);
     }
     static void finish(ServerPlayer p,ChronoFactory.Recording r){
         CompoundTag a=r.transaction;if(a==null)return;r.transaction=null;
         if(a.getBoolean("enchantMenu")){r.transactionBefore=null;return;}
         if(!a.getBoolean("opened")){a.remove("clicks");r.add(a);return;}
-        Map<String,ItemStack> after=ChronoFactory.snapshot(p),before=r.transactionBefore;r.transactionBefore=null;if(before==null)return;
+        Map<String,ItemStack> after=exactSnapshot(p),before=r.transactionBefore;r.transactionBefore=null;if(before==null)return;
         ListTag inputs=new ListTag(),outputs=new ListTag();Set<String> keys=new HashSet<>(before.keySet());keys.addAll(after.keySet());
         for(String k:keys){ItemStack b=before.getOrDefault(k,ItemStack.EMPTY),n=after.getOrDefault(k,ItemStack.EMPTY);int delta=n.getCount()-b.getCount();if(delta==0)continue;CompoundTag row=new CompoundTag();row.put("item",(delta<0?b:n).copyWithCount(1).save(p.registryAccess()));row.putInt("count",Math.abs(delta));(delta<0?inputs:outputs).add(row);}
         int levels=Math.max(0,r.transactionLevels-p.experienceLevel);
