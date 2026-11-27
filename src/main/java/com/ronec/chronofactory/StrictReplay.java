@@ -46,13 +46,13 @@ public final class StrictReplay {
         ItemStack cursor=f.containerMenu.getCarried();if(cursor.isEmpty())a.remove("strictCursor");else a.put("strictCursor",cursor.save(f.registryAccess()));
     }
     static void finishCycle(MacroPlayer f,CompoundTag a){
-        f.closeContainer();ItemStack cursor=f.inventoryMenu.getCarried();f.inventoryMenu.setCarried(ItemStack.EMPTY);
+        f.closeContainer();f.inventoryMenu.removed(f);ItemStack cursor=f.inventoryMenu.getCarried();f.inventoryMenu.setCarried(ItemStack.EMPTY);
         if(!cursor.isEmpty()){f.getInventory().add(cursor);if(!cursor.isEmpty())f.drop(cursor,false);}a.remove("strictCursor");
         a.remove("strictVx");a.remove("strictVy");a.remove("strictVz");a.remove("strictUseDelay");a.remove("strictMinePos");a.remove("strictMineProgress");a.remove("strictAttackDelay");a.remove("strictFlags");
     }
     static void forget(MacroPlayer f,CompoundTag a){finishCycle(f,a);PLAYERS.remove(f.getUUID());}
     static void clickGui(MacroPlayer f,CompoundTag event){
-        if(event.getBoolean("close")||"close".equals(event.getString("kind"))){f.closeContainer();return;}
+        if(event.getBoolean("close")||"close".equals(event.getString("kind"))){if(f.containerMenu==f.inventoryMenu)f.inventoryMenu.removed(f);else f.closeContainer();return;}
         AbstractContainerMenu menu=f.containerMenu;
         if(event.getBoolean("inventory")){if(menu!=f.inventoryMenu)return;}
         else if(menu==f.inventoryMenu||!menu.stillValid(f))return;

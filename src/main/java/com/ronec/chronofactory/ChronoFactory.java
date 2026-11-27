@@ -371,7 +371,14 @@ public final class ChronoFactory {
     public static void rawGui(ServerPlayer p,int slot,int button,int click,boolean close){
         if(p instanceof FakePlayer)return;Recording r=RECORDINGS.get(p.getUUID());
         if(r==null)return;
-        if(!close)r.craftCapture=CraftingReplay.before(p,r,slot,click);
+        if(!close){
+            if(r.container!=null&&machineInventory(p.serverLevel(),r.container)&&p.containerMenu!=p.inventoryMenu){
+                // Smelting can alter the slots between clicks; snapshot the actual
+                // current contents immediately before each player transaction.
+                r.previous=snapshot(p);r.containerBefore=slotSnapshot(handler(p.serverLevel(),r.container));r.menuSeen=true;r.pendingUse=null;
+            }
+            r.craftCapture=CraftingReplay.before(p,r,slot,click);
+        }
         if(r.gui.size()>=4096)return;
         CompoundTag event=new CompoundTag();event.putString("kind",close?"close":"click");event.putInt("tick",r.raw.size()/3);event.putInt("slot",slot);event.putInt("button",button);event.putInt("click",click);event.putBoolean("close",close);event.putBoolean("inventory",p.containerMenu==p.inventoryMenu);event.putInt("slots",p.containerMenu.slots.size());r.gui.add(event);
     }
@@ -384,7 +391,7 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.get(p.getUUID());
         if(r==null)return;
         CraftingReplay.after(p,r);
-        if(r.container!=null&&p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;}
+        if(r.container!=null&&p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;if(machineInventory(p.serverLevel(),r.container))captureTransfers(p,r);}
     }
     static void inputEdge(ServerPlayer p,HeldInput edge){
         Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
@@ -508,7 +515,7 @@ public final class ChronoFactory {
         if(r.gui.size()<4096){CompoundTag input=a.copy();input.putString("kind","use");input.putInt("tick",r.raw.size()/3);input.putInt("selected",p.getInventory().selected);r.gui.add(input);}
         IItemHandler inventory=handler(p.serverLevel(),pos);
         r.craftStation=null;
-        if(p.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)||p.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.STONECUTTER)){
+        if(!p.isShiftKeyDown()&&(p.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)||p.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.STONECUTTER))){
             r.craftStation=pos.immutable();r.pendingUse=null;return;
         }
         if(inventory!=null&&!p.isShiftKeyDown()){
