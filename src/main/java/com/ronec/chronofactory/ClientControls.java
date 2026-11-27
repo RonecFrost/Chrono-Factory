@@ -31,6 +31,7 @@ public final class ClientControls{
     @SubscribeEvent public static void click(InputEvent.InteractionKeyMappingTriggered e){
         var p=Minecraft.getInstance().player;
         if(p==null)return;
+        if(e.isPickBlock()&&recording(Minecraft.getInstance())){PacketDistributor.sendToServer(ChronoFactory.PickBlock.INSTANCE);if(ChronoFactory.watch(p.getMainHandItem())){e.setCanceled(true);e.setSwingHand(false);}return;}
         if(!(p.getMainHandItem().getItem() instanceof ChronoFactory.Watch)){
             if(recording(Minecraft.getInstance())){if(e.isUseItem())input(true,true);if(e.isAttack())input(false,true);}
             return;

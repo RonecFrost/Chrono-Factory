@@ -95,13 +95,16 @@ public final class StrictReplay {
         float yaw=Float.intBitsToFloat(frames[i+1]),pitch=Float.intBitsToFloat(frames[i+2]);
         f.getInventory().selected=Math.min(8,slot);f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);f.setSprinting((flags&SPRINT)!=0);
         if(f.containerMenu!=f.inventoryMenu&&!f.containerMenu.stillValid(f))f.closeContainer();
-        Vec3 here=echo.position();f.setPos(here.x,here.y,here.z);
+        Vec3 here=echo.position();
+        // Real pearl impacts are delivered asynchronously, before the next sampled movement.
+        if(a.contains("pearlLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("pearlLanding"));if(l.hasChunkAt(BlockPos.containing(dest))){here=dest;a.remove("pearlLanding");}}
+        f.setPos(here.x,here.y,here.z);
         // The same sampled path used for the adaptive engine, but replayed as
         // per-tick relative node deltas. No acceleration, no catch-up, no target
         // coordinate snapping. A blocked tick consumes its time normally.
         int[] motion=tl.getIntArray("motion");
         Vec3 desired=new Vec3(Float.intBitsToFloat(motion[i]),Float.intBitsToFloat(motion[i+1]),Float.intBitsToFloat(motion[i+2]));
-        if(!Double.isFinite(desired.lengthSqr())||desired.lengthSqr()>4)desired=Vec3.ZERO;
+        if(!Double.isFinite(desired.lengthSqr())||desired.lengthSqr()>16384)desired=Vec3.ZERO;
         f.noPhysics=false;f.setDeltaMovement(Vec3.ZERO);
         f.setOnGround(l.getBlockCollisions(f,f.getBoundingBox().move(0,-.06,0)).iterator().hasNext());
         // Resolve collisions with the vanilla collision solver. The next sample
@@ -115,8 +118,10 @@ public final class StrictReplay {
         ListTag gui=tl.getList("gui",Tag.TAG_COMPOUND);int cursor=a.getInt("guiIndex");
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
-            CompoundTag event=gui.getCompound(cursor++);
-            if("speech".equals(event.getString("kind"))){EchoSpeech.post(l,f,a,tl,event);task="Chat";}
+            CompoundTag event=gui.getCompound(cursor++);FlightReplay.context(l,a,tl,event.contains("shotTick")?event.getInt("shotTick"):-1);
+            if("teleport".equals(event.getString("kind"))){if("command".equals(event.getString("cause"))&&a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);a.remove("commandLanding");}task="Teleport";}
+            else if("pick_block".equals(event.getString("kind"))){PickReplay.perform(l,f,a,event);task="Pick block";}
+            else if("speech".equals(event.getString("kind"))){EchoSpeech.post(l,f,a,tl,event);if(a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);}task="Chat";}
             else if("swap_hands".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ItemActions.swap(f);task="Swap hands";}
             else if("rename_anvil".equals(event.getString("kind"))){if(f.containerMenu instanceof AnvilMenu anvil)anvil.setItemName(event.getString("name"));task="Rename item";}
             else if("ars_edit".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ArsSupport.edit(f.getMainHandItem(),event,l);task="Configure spell";}

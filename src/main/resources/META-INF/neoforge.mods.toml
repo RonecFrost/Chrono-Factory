@@ -3,7 +3,7 @@ loaderVersion="[4,)"
 license="All Rights Reserved"
 [[mods]]
 modId="chronofactory"
-version="0.7.2-alpha"
+version="0.7.3-alpha"
 displayName="Chrono Factory"
 description="Record a timeline and manifest a temporal echo."
 [[dependencies.chronofactory]]

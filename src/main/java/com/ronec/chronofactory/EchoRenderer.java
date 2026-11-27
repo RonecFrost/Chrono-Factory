@@ -20,7 +20,8 @@ import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 @EventBusSubscriber(modid=ChronoFactory.ID,value=Dist.CLIENT,bus=EventBusSubscriber.Bus.MOD)
 public final class EchoRenderer extends EntityRenderer<EchoEntity>{
     private final PlayerModel<EchoEntity> wide,slim;
-    public EchoRenderer(EntityRendererProvider.Context ctx){super(ctx);wide=new PlayerModel<>(ctx.bakeLayer(ModelLayers.PLAYER),false);slim=new PlayerModel<>(ctx.bakeLayer(ModelLayers.PLAYER_SLIM),true);shadowRadius=0;}
+    private final net.minecraft.client.renderer.ItemInHandRenderer heldRenderer;
+    public EchoRenderer(EntityRendererProvider.Context ctx){super(ctx);heldRenderer=ctx.getItemInHandRenderer();wide=new PlayerModel<>(ctx.bakeLayer(ModelLayers.PLAYER),false);slim=new PlayerModel<>(ctx.bakeLayer(ModelLayers.PLAYER_SLIM),true);shadowRadius=0;}
     @SubscribeEvent public static void register(EntityRenderersEvent.RegisterRenderers e){e.registerEntityRenderer(ChronoFactory.ECHO.get(),EchoRenderer::new);}
     private PlayerSkin skin(EchoEntity e){
         Minecraft mc=Minecraft.getInstance();
@@ -36,8 +37,8 @@ public final class EchoRenderer extends EntityRenderer<EchoEntity>{
         pose.pushPose();pose.mulPose(Axis.YP.rotationDegrees(180-yaw));pose.scale(-1,-1,1);pose.translate(0,-1.501,0);
         model.setAllVisible(true);model.young=false;model.riding=false;model.crouching=e.isShiftKeyDown();
         e.swingingArm=e.offSwing()?net.minecraft.world.InteractionHand.OFF_HAND:net.minecraft.world.InteractionHand.MAIN_HAND;
-        model.rightArmPose=e.blockingVisual()&&!e.offSwing()?net.minecraft.client.model.HumanoidModel.ArmPose.BLOCK:net.minecraft.client.model.HumanoidModel.ArmPose.EMPTY;
-        model.leftArmPose=e.blockingVisual()&&e.offSwing()?net.minecraft.client.model.HumanoidModel.ArmPose.BLOCK:net.minecraft.client.model.HumanoidModel.ArmPose.EMPTY;
+        model.rightArmPose=e.blockingVisual()&&!e.offSwing()?net.minecraft.client.model.HumanoidModel.ArmPose.BLOCK:e.visualHeld().isEmpty()?net.minecraft.client.model.HumanoidModel.ArmPose.EMPTY:net.minecraft.client.model.HumanoidModel.ArmPose.ITEM;
+        model.leftArmPose=e.blockingVisual()&&e.offSwing()?net.minecraft.client.model.HumanoidModel.ArmPose.BLOCK:e.visualOff().isEmpty()?net.minecraft.client.model.HumanoidModel.ArmPose.EMPTY:net.minecraft.client.model.HumanoidModel.ArmPose.ITEM;
         model.attackTime=e.smoothSwing(partial);
         model.setupAnim(e,e.smoothWalk(partial),e.smoothStride(partial),e.smoothAge(partial),0,e.smoothLook(partial));
         int tint=ChronoFactory.TINTS[Math.floorMod(e.tint(),ChronoFactory.TINTS.length)];
@@ -48,10 +49,10 @@ public final class EchoRenderer extends EntityRenderer<EchoEntity>{
         model.renderToBuffer(pose,buffers.getBuffer(RenderType.entityTranslucent(skin.texture())),light,OverlayTexture.NO_OVERLAY,color);
         if(phase==24&&!e.visualHeld().isEmpty()&&model.rightArm.visible){
             pose.pushPose();model.translateToHand(HumanoidArm.RIGHT,pose);pose.mulPose(Axis.XP.rotationDegrees(-90));pose.mulPose(Axis.YP.rotationDegrees(180));pose.translate(1f/16f,.125,-.625);
-            Minecraft.getInstance().getItemRenderer().renderStatic(e.visualHeld(),ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,light,OverlayTexture.NO_OVERLAY,pose,buffers,e.level(),e.getId());
+            heldRenderer.renderItem(e,e.visualHeld(),ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,false,pose,buffers,light);
             pose.popPose();
         }
-        if(phase==24&&!e.visualOff().isEmpty()&&model.leftArm.visible){pose.pushPose();model.translateToHand(HumanoidArm.LEFT,pose);pose.mulPose(Axis.XP.rotationDegrees(-90));pose.mulPose(Axis.YP.rotationDegrees(180));pose.translate(-1f/16f,.125,-.625);Minecraft.getInstance().getItemRenderer().renderStatic(e.visualOff(),ItemDisplayContext.THIRD_PERSON_LEFT_HAND,light,OverlayTexture.NO_OVERLAY,pose,buffers,e.level(),e.getId());pose.popPose();}
+        if(phase==24&&!e.visualOff().isEmpty()&&model.leftArm.visible){pose.pushPose();model.translateToHand(HumanoidArm.LEFT,pose);pose.mulPose(Axis.XP.rotationDegrees(-90));pose.mulPose(Axis.YP.rotationDegrees(180));pose.translate(-1f/16f,.125,-.625);heldRenderer.renderItem(e,e.visualOff(),ItemDisplayContext.THIRD_PERSON_LEFT_HAND,true,pose,buffers,light);pose.popPose();}
         pose.popPose();super.render(e,yaw,partial,pose,buffers,light);
     }
 }
