@@ -1,1 +1,1 @@
-{"parent":"minecraft:item/generated","textures":{"layer0":"minecraft:item/clock_00"}}
+{"parent":"minecraft:item/generated","textures":{"layer0":"chronofactory:item/personal_timekeeper"}}

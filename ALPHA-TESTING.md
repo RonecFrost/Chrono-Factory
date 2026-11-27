@@ -1,8 +1,9 @@
-# Chrono Factory 0.1.0-alpha
-Experimental first implementation for Minecraft 1.21.1 NeoForge 21.1.268. Use a disposable world, back up saves. Both client and server need the mod.
-- Left-click the Timekeeper to record, finish, manifest, dismiss. Right-click in air opens the management screen. Creative watch is in Tools & Utilities.
-- Recording swaps the ordinary inventory for a temporary one and restores it on finishing/logout/death. Creative recording temporarily changes to survival. The real demonstration consumes real resources.
-- Demonstrate withdrawing a tool from a chest, walking to a block, mining, depositing resources, returning the tool, and returning to the start. Refill chest before testing. Return to the start yourself at the end of the demonstration.
-- Echoes use a distinct simulated survival player; item type and components must match, except damage. Actual tool damage persists. Recordings and active inventory are stored with the world/watch.
-- No force loading, only runs with the owner online and watch in inventory. No arbitrary GUI replay, offhand replay, advanced player-skin renderer, full permission integration, or portable generator verification yet. Visual proxy is a named armor stand. Creative timeline menu supports up to 20 saved timelines. Temporary inventory recovery and item transfers need extensive testing. Avoid protected worlds and valuable equipment.
-- This is source code, not a verified gameplay release. GitHub Actions compiles a JAR and publishes it as a prerelease only after a successful build.
+# Chrono Factory 0.1.1-alpha
+NeoForge 21.1.268, Minecraft 1.21.1, Java 21. Test in a new world or a backup.
+- Dedicated dark Timekeeper screen: no chest inventory UI. Right-click anywhere with the watch in your main hand. Use actual buttons.
+- One attack press per state transition. Left click once, walk a short loop without collecting anything, then left click twice more. No minimum inventory or material requirement. Idle-only recordings are supported.
+- Original inventory is temporarily stored and resynced to the client; no need to empty it beforehand. Creative recording temporarily changes to survival. Restore on finish/cancel/logout/death. Test inventory recovery before using valuables.
+- Creative watch can save multiple timelines and manifest independently; up to 20 entries, paged.
+- Purple/black custom textures, energy bar, and walking limb animation on the temporary armor stand Echo.
+- Full player-skin renderer and advanced GUI replay are not implemented. No Paradox Machine or chunk loading yet.
+- Compilation via GitHub Actions is not a gameplay test.
