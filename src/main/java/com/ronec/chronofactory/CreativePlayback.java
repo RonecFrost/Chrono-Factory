@@ -20,7 +20,7 @@ final class CreativePlayback{
         List<ItemStack> old=BEFORE.remove(p.getUUID());ChronoFactory.Recording r=ChronoFactory.RECORDINGS.get(p.getUUID());if(old==null||r==null||!p.isCreative())return;
         for(int k=0;k<41;k++){ItemStack st=p.getInventory().getItem(k);if(ItemStack.matches(old.get(k),st)||ChronoFactory.watch(st)||ChronoFactory.watch(old.get(k)))continue;
             CompoundTag a=ChronoFactory.point(p,"creative_slot");a.putInt("slot",k);if(!st.isEmpty())a.put("stack",st.save(p.registryAccess()));r.add(a);
-            if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","creative_slot");raw.putInt("tick",r.raw.size()/3);r.gui.add(raw);}
+            if(r.gui.size()<TimelineStorage.MAX_GUI){CompoundTag raw=a.copy();raw.putString("kind","creative_slot");raw.putInt("tick",r.raw.size()/3);r.gui.add(raw);}
         }
     }
     static boolean apply(FakePlayer f,CompoundTag a,ServerLevel l){

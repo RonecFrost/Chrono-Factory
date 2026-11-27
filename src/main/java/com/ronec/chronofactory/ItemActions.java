@@ -23,7 +23,7 @@ final class ItemActions{
         CompoundTag action=r.itemHold;r.projectileTick=r.tick;action.putInt("releaseShotTick",r.tick);
         int duration=Math.max(1,p.getUseItem().getUseDuration(p)-p.getUseItemRemainingTicks());
         action.putInt("duration",duration);action.putFloat("releaseYaw",p.getYRot());action.putFloat("releasePitch",p.getXRot());
-        if(r.gui.size()<4096){CompoundTag raw=ChronoFactory.point(p,"item_release");raw.putString("kind","item_release");raw.putInt("tick",r.raw.size()/3);raw.putBoolean("offhand",p.getUsedItemHand()==InteractionHand.OFF_HAND);raw.putInt("shotTick",r.tick);raw.putInt("duration",duration);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
+        if(r.gui.size()<TimelineStorage.MAX_GUI){CompoundTag raw=ChronoFactory.point(p,"item_release");raw.putString("kind","item_release");raw.putInt("tick",r.raw.size()/3);raw.putBoolean("offhand",p.getUsedItemHand()==InteractionHand.OFF_HAND);raw.putInt("shotTick",r.tick);raw.putInt("duration",duration);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
         r.itemHold=null;
     }
     static void aim(FakePlayer f,float yaw,float pitch){f.setYRot(yaw);f.setXRot(pitch);f.setYHeadRot(yaw);f.setYBodyRot(yaw);f.yRotO=yaw;f.xRotO=pitch;f.yHeadRotO=yaw;}
@@ -45,7 +45,7 @@ final class ItemActions{
         a.putInt("itemGap",r.lastItemTick<0?0:Math.max(1,r.tick-r.lastItemTick));r.lastItemTick=r.tick;
         a.putBoolean("offhand",hand==InteractionHand.OFF_HAND);a.put("item",stack.copyWithCount(1).save(p.registryAccess()));a.putInt("duration",1);a.putBoolean("held",stack.getUseDuration(p)>0);a.putInt("spellSlot",ArsSupport.slot(stack));r.add(a);
         if(a.getBoolean("held"))r.itemHold=a;
-        if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","item_use");raw.putInt("tick",r.raw.size()/3);raw.putInt("shotTick",r.tick);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
+        if(r.gui.size()<TimelineStorage.MAX_GUI){CompoundTag raw=a.copy();raw.putString("kind","item_use");raw.putInt("tick",r.raw.size()/3);raw.putInt("shotTick",r.tick);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
     }
     static void loadXp(FakePlayer f,CompoundTag job){f.experienceLevel=job.getInt("xpLevel");f.experienceProgress=job.getFloat("xpProgress");f.totalExperience=job.getInt("xpTotal");}
     static void saveXp(FakePlayer f,CompoundTag job){job.putInt("xpLevel",f.experienceLevel);job.putFloat("xpProgress",f.experienceProgress);job.putInt("xpTotal",f.totalExperience);}

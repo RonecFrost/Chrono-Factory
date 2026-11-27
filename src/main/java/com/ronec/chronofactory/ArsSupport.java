@@ -35,7 +35,7 @@ final class ArsSupport{
                     Object prior=invoke(before,"getSpell",n),now=invoke(after,"getSpell",n);String oldName=(String)invoke(before,"getSpellName",n),newName=(String)invoke(after,"getSpellName",n);
                     if(Objects.equals(prior,now)&&Objects.equals(oldName,newName))continue;
                     CompoundTag a=ChronoFactory.point(p,"ars_edit");a.put("item",old.copyWithCount(1).save(p.registryAccess()));a.put("edited",st.copyWithCount(1).save(p.registryAccess()));a.putInt("spellSlot",n);r.add(a);
-                    if(r.gui.size()<4096){CompoundTag event=a.copy();event.putString("kind","ars_edit");event.putInt("tick",r.raw.size()/3);event.putInt("selected",i);r.gui.add(event);}
+                    if(r.gui.size()<TimelineStorage.MAX_GUI){CompoundTag event=a.copy();event.putString("kind","ars_edit");event.putInt("tick",r.raw.size()/3);event.putInt("selected",i);r.gui.add(event);}
                 }
             }catch(Exception ignored){}
         }

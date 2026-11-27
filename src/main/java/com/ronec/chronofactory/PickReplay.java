@@ -12,7 +12,7 @@ final class PickReplay{
         BlockHitResult hit=ChronoFactory.aimedBlock(p);if(hit.getType()==HitResult.Type.MISS)return;
         BlockPos pos=hit.getBlockPos();ItemStack st=new ItemStack(p.level().getBlockState(pos).getBlock().asItem());if(st.isEmpty()||ChronoFactory.watch(st))return;
         r.move(p);CompoundTag a=ChronoFactory.point(p,"pick_block");a.putLong("pos",pos.asLong());a.putInt("selected",p.getInventory().selected);a.putBoolean("creativePick",p.isCreative());a.put("item",st.save(p.registryAccess()));r.add(a);
-        if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","pick_block");raw.putInt("tick",r.raw.size()/3);r.gui.add(raw);}
+        if(r.gui.size()<TimelineStorage.MAX_GUI){CompoundTag raw=a.copy();raw.putString("kind","pick_block");raw.putInt("tick",r.raw.size()/3);r.gui.add(raw);}
     }
     static boolean perform(ServerLevel l,FakePlayer f,CompoundTag job,CompoundTag a){
         ItemStack wanted=ChronoFactory.template(a,l);if(wanted.isEmpty())return false;

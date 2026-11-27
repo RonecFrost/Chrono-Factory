@@ -18,7 +18,7 @@ final class EchoSpeech{
         String cmd=message.startsWith("/")?message.substring(1):message;
         if(command&&(cmd.equals("chronofactory")||cmd.startsWith("chronofactory ")||cmd.startsWith("chronofactory:")))return;
         r.move(p);CompoundTag a=ChronoFactory.point(p,"speech");a.putString("message",command?cmd:message);a.putBoolean("command",command);a.putInt("ticks",Math.max(5,Math.min(100,message.length()*2)));r.add(a);
-        if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","speech");raw.putInt("tick",r.raw.size()/3);r.gui.add(raw);}
+        if(r.gui.size()<TimelineStorage.MAX_GUI){CompoundTag raw=a.copy();raw.putString("kind","speech");raw.putInt("tick",r.raw.size()/3);r.gui.add(raw);}
     }
     static ItemActions.Outcome perform(ServerLevel l,FakePlayer f,CompoundTag job,CompoundTag tl,CompoundTag a){
         int elapsed=job.getInt("waited")+1;job.putInt("waited",elapsed);

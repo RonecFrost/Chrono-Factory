@@ -119,7 +119,8 @@ public final class StrictReplay {
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
             CompoundTag event=gui.getCompound(cursor++);FlightReplay.context(l,a,tl,event.contains("shotTick")?event.getInt("shotTick"):-1);
-            if("creative_slot".equals(event.getString("kind"))){CreativePlayback.apply(f,event,l);task="Creative inventory selection";}
+            if("creative_break".equals(event.getString("kind"))){if(f.isCreative()){ItemActions.aim(f,event.getFloat("yaw"),event.getFloat("pitch"));BlockHitResult hit=ChronoFactory.aimedBlock(f);if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos()))f.gameMode.destroyBlock(hit.getBlockPos());swung=true;task="Creative instant break";}}
+            else if("creative_slot".equals(event.getString("kind"))){CreativePlayback.apply(f,event,l);task="Creative inventory selection";}
             else if("teleport".equals(event.getString("kind"))){if("command".equals(event.getString("cause"))&&a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);a.remove("commandLanding");}task="Teleport";}
             else if("pick_block".equals(event.getString("kind"))){PickReplay.perform(l,f,a,event);task="Pick block";}
             else if("speech".equals(event.getString("kind"))){EchoSpeech.post(l,f,a,tl,event);if(a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);}task="Chat";}
@@ -155,14 +156,14 @@ public final class StrictReplay {
         a.putInt("strictUseDelay",delay);
         if(!hadRecordedUse&&!swung){ItemActions.aim(f,yaw,pitch);}f.setShiftKeyDown((flags&SNEAK)!=0);
         int attackDelay=Math.max(0,a.getInt("strictAttackDelay")-1);
-        if((flags&ATTACK)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu){
+        if((flags&ATTACK)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu&&!(f.isCreative()&&tl.getBoolean("creativeBreakEvents"))){
             task="Holding left-click";
             BlockHitResult hit=ChronoFactory.aimedBlock(f);swung=true;
             if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos())&&attackDelay==0){
                 BlockPos pos=hit.getBlockPos();BlockState state=l.getBlockState(pos);
                 if(!a.contains("strictMinePos")||a.getLong("strictMinePos")!=pos.asLong()){a.putLong("strictMinePos",pos.asLong());a.putFloat("strictMineProgress",0);}
                 float progress=a.getFloat("strictMineProgress")+state.getDestroyProgress(f,l,pos);a.putFloat("strictMineProgress",progress);
-                if(progress>=1){f.gameMode.destroyBlock(pos);a.remove("strictMinePos");a.remove("strictMineProgress");attackDelay=5;}
+                if(progress>=1||f.isCreative()){f.gameMode.destroyBlock(pos);a.remove("strictMinePos");a.remove("strictMineProgress");attackDelay=5;}
             }else if(hit.getType()==HitResult.Type.MISS){a.remove("strictMinePos");a.remove("strictMineProgress");if(!hadRecordedAttack&&attackDelay==0&&ItemActions.attack(f))attackDelay=10;}
         }else{a.remove("strictMinePos");a.remove("strictMineProgress");}
         a.putInt("strictAttackDelay",attackDelay);
