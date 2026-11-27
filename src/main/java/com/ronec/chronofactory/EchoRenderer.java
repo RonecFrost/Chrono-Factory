@@ -1,0 +1,54 @@
+package com.ronec.chronofactory;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.model.PlayerModel;
+import net.minecraft.client.model.geom.ModelLayers;
+import net.minecraft.client.renderer.*;
+import net.minecraft.client.renderer.entity.*;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.resources.*;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.Mth;
+import net.minecraft.world.item.ItemDisplayContext;
+import net.minecraft.world.entity.HumanoidArm;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+
+@EventBusSubscriber(modid=ChronoFactory.ID,value=Dist.CLIENT,bus=EventBusSubscriber.Bus.MOD)
+public final class EchoRenderer extends EntityRenderer<EchoEntity>{
+    private final PlayerModel<EchoEntity> wide,slim;
+    public EchoRenderer(EntityRendererProvider.Context ctx){super(ctx);wide=new PlayerModel<>(ctx.bakeLayer(ModelLayers.PLAYER),false);slim=new PlayerModel<>(ctx.bakeLayer(ModelLayers.PLAYER_SLIM),true);shadowRadius=0;}
+    @SubscribeEvent public static void register(EntityRenderersEvent.RegisterRenderers e){e.registerEntityRenderer(ChronoFactory.ECHO.get(),EchoRenderer::new);}
+    private PlayerSkin skin(EchoEntity e){
+        Minecraft mc=Minecraft.getInstance();
+        var connection=mc.getConnection();
+        if(connection!=null){var info=connection.getPlayerInfo(e.ownerId());if(info!=null)return info.getSkin();}
+        return DefaultPlayerSkin.get(e.ownerId());
+    }
+    @Override public ResourceLocation getTextureLocation(EchoEntity e){return skin(e).texture();}
+    @Override public void render(EchoEntity e,float yaw,float partial,PoseStack pose,MultiBufferSource buffers,int light){
+        int phase=e.phase();if(phase<=10)return;
+        float alpha=.68f*Mth.clamp((phase-10)/14f,0f,1f);
+        PlayerSkin skin=skin(e);PlayerModel<EchoEntity> model=skin.model()==PlayerSkin.Model.SLIM?slim:wide;
+        pose.pushPose();pose.mulPose(Axis.YP.rotationDegrees(180-yaw));pose.scale(-1,-1,1);pose.translate(0,-1.501,0);
+        model.setAllVisible(true);model.young=false;model.riding=false;model.crouching=e.isShiftKeyDown();
+        model.attackTime=e.swinging()?.35f:0f;
+        // Recorded movement phase stops changing during stasis.
+        model.setupAnim(e,e.walkPhase(),e.walking()?.95f:0f,0,0,e.lookPitch());
+        int tint=ChronoFactory.TINTS[Math.floorMod(e.tint(),ChronoFactory.TINTS.length)];
+        int color=((int)(alpha*255)<<24)|tint;
+        // Intermittent limb desync, with actual transparent sections rather than painted patches.
+        if(phase==24&&((e.tickCount/5+e.getId())%47==0)){model.leftArm.visible=false;model.leftSleeve.visible=false;}
+        if(phase==24&&((e.tickCount/5+e.getId())%61==0)){model.rightLeg.visible=false;model.rightPants.visible=false;}
+        model.renderToBuffer(pose,buffers.getBuffer(RenderType.entityTranslucent(skin.texture())),light,OverlayTexture.NO_OVERLAY,color);
+        if(phase==24&&!e.visualHeld().isEmpty()&&model.rightArm.visible){
+            pose.pushPose();model.translateToHand(HumanoidArm.RIGHT,pose);pose.mulPose(Axis.XP.rotationDegrees(-90));pose.mulPose(Axis.YP.rotationDegrees(180));pose.translate(1f/16f,.125,-.625);
+            Minecraft.getInstance().getItemRenderer().renderStatic(e.visualHeld(),ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,light,OverlayTexture.NO_OVERLAY,pose,buffers,e.level(),e.getId());
+            pose.popPose();
+        }
+        pose.popPose();super.render(e,yaw,partial,pose,buffers,light);
+    }
+}

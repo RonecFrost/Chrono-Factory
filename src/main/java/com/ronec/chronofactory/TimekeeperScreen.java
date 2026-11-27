@@ -26,7 +26,7 @@ public final class TimekeeperScreen extends Screen {
         b.active=enabled;return addRenderableWidget(b);
     }
     @Override protected void init(){
-        w=Math.min(344,width-12);h=Math.min(creative()?254:180,height-8);
+        w=Math.min(344,width-12);h=Math.min(creative()?278:204,height-8);
         left=(width-w)/2;top=(height-h)/2;
         int half=(w-30)/2;
         boolean unlocked=!recording()&&!state.getBoolean("otherRecording");
@@ -38,7 +38,8 @@ public final class TimekeeperScreen extends Screen {
             else {send("cycle",0);onClose();}
         },recording()||unlocked);
         button(20+half,78,half,recording()?"Cancel recording":"Clear recording",()->send(recording()?"cancel":"clear",0),recording()||(unlocked&&hasCurrent()));
-        button(10,103,w-20,"Retain recording: "+(state.getBoolean("retain")?"ON":"OFF"),()->send("retain",0),unlocked);
+        button(10,103,half,"Retain: "+(state.getBoolean("retain")?"ON":"OFF"),()->send("retain",0),unlocked);
+        button(20+half,103,half,"Tint: "+ChronoFactory.TINT_NAMES[state.getInt("tint")%ChronoFactory.TINT_NAMES.length],()->send("tint",-1),unlocked);
         if(creative()){
             button(10,128,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
             button(20+half,128,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
@@ -47,6 +48,7 @@ public final class TimekeeperScreen extends Screen {
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
                 int y=154+row*22;CompoundTag entry=saved().getCompound(i);
+                button(w-174,y,50,ChronoFactory.TINT_NAMES[entry.getInt("tint")%ChronoFactory.TINT_NAMES.length],()->send("tint",i),unlocked);
                 button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->send("toggle",i),unlocked);
                 button(w-44,y,34,"Del",()->send("delete",i),unlocked);
             }
@@ -75,9 +77,9 @@ public final class TimekeeperScreen extends Screen {
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
                 CompoundTag t=saved().getCompound(i);int y=154+row*22;
-                g.fill(left+10,top+y,left+w-128,top+y+20,0xFF261C31);
-                String name=font.plainSubstrByWidth(t.getString("name"),Math.max(10,w-150));
-                g.drawString(font,name,left+14,top+y+2,0xFFE1D7E8,false);
+                g.fill(left+10,top+y,left+w-180,top+y+20,0xFF261C31);
+                String name=font.plainSubstrByWidth(t.getString("name"),Math.max(10,w-198));
+                g.drawString(font,name,left+14,top+y+2,0xFF000000|ChronoFactory.TINTS[t.getInt("tint")%ChronoFactory.TINTS.length],false);
                 g.drawString(font,t.getInt("steps")+" steps"+(t.getBoolean("active")?" / active":""),left+14,top+y+11,grey,false);
             }
             int max=Math.max(1,(saved().size()+rows-1)/rows);

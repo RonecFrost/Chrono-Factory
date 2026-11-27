@@ -4,6 +4,10 @@ import java.util.*;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.core.*;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.Registries;
+import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
+import net.minecraft.core.particles.DustParticleOptions;
+import org.joml.Vector3f;
 import net.minecraft.nbt.*;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -52,9 +56,15 @@ public final class ChronoFactory {
     static final DeferredRegister.Items ITEMS=DeferredRegister.createItems(ID);
     public static final net.neoforged.neoforge.registries.DeferredItem<Watch> PERSONAL=ITEMS.register("personal_timekeeper",()->new Watch(false));
     public static final net.neoforged.neoforge.registries.DeferredItem<Watch> CREATIVE=ITEMS.register("creative_timekeeper",()->new Watch(true));
+    static final int[] TINTS={0xFFFFFF,0xB085FF,0x77DFFF,0xFF7979,0x83EF9B,0xFFD078,0xFF9CD6,0x86A3FF};
+    static final String[] TINT_NAMES={"Natural","Violet","Cyan","Red","Green","Amber","Pink","Blue"};
+    static final DeferredRegister<EntityType<?>> ENTITIES=DeferredRegister.create(Registries.ENTITY_TYPE,ID);
+    static final net.neoforged.neoforge.registries.DeferredHolder<EntityType<?>,EntityType<EchoEntity>> ECHO=ENTITIES.register("echo",()->EntityType.Builder.<EchoEntity>of(EchoEntity::new,MobCategory.MISC).sized(.6f,1.8f).clientTrackingRange(8).updateInterval(1).build(ID+":echo"));
+    static int tint(CompoundTag t){return Math.floorMod(t.getInt("tint"),TINTS.length);}
     static final Map<UUID,Recording> RECORDINGS=new HashMap<>();
     public ChronoFactory(IEventBus bus) {
-        ITEMS.register(bus);
+        ITEMS.register(bus);ENTITIES.register(bus);
+        bus.addListener((EntityAttributeCreationEvent e)->e.put(ECHO.get(),Mob.createMobAttributes().build()));
         bus.addListener(ChronoFactory::registerNetwork);
         bus.addListener(ChronoFactory::capabilities);
         bus.addListener((BuildCreativeModeTabContentsEvent e)->{if(e.getTabKey()==CreativeModeTabs.TOOLS_AND_UTILITIES){e.accept(PERSONAL.get());e.accept(CREATIVE.get());}});
@@ -67,6 +77,7 @@ public final class ChronoFactory {
         game.addListener(ChronoFactory::login);
         game.addListener(ChronoFactory::death);
         game.addListener(ChronoFactory::toss);
+        game.addListener(ChronoFactory::pickup);
     }
     public record Click() implements CustomPacketPayload {
         public static final Click INSTANCE=new Click();
@@ -91,7 +102,7 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("2");
+        var registrar=e.registrar("3");
         registrar.playToServer(Click.TYPE,Click.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) cycle(p);}));
         registrar.playToServer(UiCommand.TYPE,UiCommand.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) uiCommand(p,msg);}));
         registrar.playToClient(UiState.TYPE,UiState.CODEC,(msg,ctx)->ctx.enqueueWork(()->ClientControls.show(msg)));
@@ -182,7 +193,7 @@ public final class ChronoFactory {
         ItemStack s=find(p,r.watch);
         if(save&&!s.isEmpty()){
             if(r.actions.size()==1){CompoundTag idle=point(p,"wait");idle.putInt("ticks",Math.max(1,Math.min(1200,r.tick)));r.add(idle);}
-            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);t.put("current",tl);put(s,t);
+            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putBoolean("explicitPickup",true);tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
         }
         restore(p);say(p,save&&!s.isEmpty()?"RECORDING SAVED ("+r.actions.size()+" steps). Left-click to summon the Echo.":"Recording cancelled; inventory restored.");
     }
@@ -201,7 +212,23 @@ public final class ChronoFactory {
     static void logout(PlayerEvent.PlayerLoggedOutEvent e){if(e.getEntity() instanceof ServerPlayer p)finish(p,false);}
     static void login(PlayerEvent.PlayerLoggedInEvent e){if(e.getEntity() instanceof ServerPlayer p){RECORDINGS.remove(p.getUUID());restore(p);}}
     static void death(LivingDeathEvent e){if(e.getEntity() instanceof ServerPlayer p&&p.getPersistentData().contains(BACKUP))finish(p,false);}
-    static void toss(ItemTossEvent e){if(e.getPlayer() instanceof ServerPlayer p&&RECORDINGS.containsKey(p.getUUID())&&watch(e.getEntity().getItem())){e.setCanceled(true);p.getInventory().add(e.getEntity().getItem());}}
+    static void toss(ItemTossEvent e){
+        if(!(e.getPlayer() instanceof ServerPlayer p)||p instanceof FakePlayer||e.isCanceled())return;
+        Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
+        ItemStack stack=e.getEntity().getItem();
+        if(watch(stack)){e.setCanceled(true);p.getInventory().add(stack);return;}
+        r.move(p);CompoundTag a=point(p,"drop");a.putInt("count",stack.getCount());a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
+        Vec3 v=e.getEntity().getDeltaMovement();a.putDouble("vx",v.x);a.putDouble("vy",v.y);a.putDouble("vz",v.z);r.add(a);
+        if(r.menuSeen)r.previous=snapshot(p);
+    }
+    static void pickup(ItemEntityPickupEvent.Post e){
+        if(!(e.getPlayer() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
+        Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
+        ItemStack stack=e.getOriginalStack();int count=stack.getCount()-e.getCurrentStack().getCount();if(count<=0||watch(stack))return;
+        r.move(p);CompoundTag a=point(p,"pickup");a.putInt("count",count);a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
+        Vec3 v=e.getItemEntity().position();a.putDouble("ix",v.x);a.putDouble("iy",v.y);a.putDouble("iz",v.z);r.add(a);
+        if(r.menuSeen)r.previous=snapshot(p);
+    }
     static String itemKey(ItemStack s){ItemStack copy=s.copyWithCount(1);if(copy.isDamageableItem())copy.setDamageValue(0);return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(copy.getItem()).toString()+":"+copy.getComponentsPatch();}
     static Map<String,ItemStack> snapshot(ServerPlayer p){
         Map<String,ItemStack> map=new HashMap<>();
@@ -254,7 +281,7 @@ public final class ChronoFactory {
         if(l==null||!l.hasChunkAt(BlockPos.containing(vec(actions.getCompound(0))))){say(p,"Recording start is not loaded.");return;}
         UUID key=id(s);if(active(p,key,tl.getUUID("id"))||(!creative(s)&&active(p,key,null)))return;
         if(!creative(s)&&energy(s)<=0){say(p,"Timekeeper needs energy.");return;}
-        CompoundTag a=new CompoundTag();a.putUUID("id",UUID.randomUUID());a.putUUID("owner",p.getUUID());a.putUUID("watch",key);a.putString("name",p.getGameProfile().getName());a.put("timeline",tl.copy());a.putBoolean("creative",creative(s));a.put("position",actions.getCompound(0).copy());a.put("inventory",new ListTag());
+        CompoundTag a=new CompoundTag();a.putUUID("id",UUID.randomUUID());a.putUUID("owner",p.getUUID());a.putUUID("watch",key);a.putString("name",p.getGameProfile().getName());a.put("timeline",tl.copy());a.putBoolean("creative",creative(s));a.put("position",actions.getCompound(0).copy());a.put("inventory",new ListTag());a.putString("reason","Manifesting");
         WorldData d=world(l);d.echoes.add(a);d.setDirty();say(p,"Echo manifested.");
     }
     static Vec3 vec(CompoundTag a){return new Vec3(a.getDouble("x"),a.getDouble("y"),a.getDouble("z"));}
@@ -281,6 +308,54 @@ public final class ChronoFactory {
         return initial-n;
     }
     static void collect(FakePlayer f,ServerLevel l,BlockPos pos){for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,new AABB(pos).inflate(1.2))){ItemStack s=e.getItem();if(f.getInventory().add(s)&&s.isEmpty())e.discard();else e.setItem(s);}}
+    static void describe(ServerPlayer p,EchoEntity entity){
+        WorldData d=world(p.serverLevel());
+        for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;
+            if(!a.getUUID("id").equals(entity.loopId()))continue;
+            ListTag actions=timeline(a.getCompound("timeline"));int i=a.getInt("index");
+            String action=i>=0&&i<actions.size()?actions.getCompound(i).getString("type"):"transition";
+            p.sendSystemMessage(Component.literal("[Chrono] "+a.getCompound("timeline").getString("name")+" | Cycle "+(a.getInt("cycles")+1)+" | Step "+Math.min(i+1,actions.size())+"/"+actions.size()+" ("+action+")"));
+            p.sendSystemMessage(Component.literal("Status: "+(a.getString("reason").isEmpty()?"Running":a.getString("reason"))));
+            ListTag inv=a.getList("inventory",Tag.TAG_COMPOUND);StringJoiner items=new StringJoiner(", ");
+            for(Tag it:inv){ItemStack st=ItemStack.parseOptional(p.registryAccess(),(CompoundTag)it);if(!st.isEmpty())items.add(st.getCount()+" x "+st.getHoverName().getString());}
+            p.sendSystemMessage(Component.literal("Carrying: "+(items.length()==0?"Nothing":items.toString())));return;
+        }
+        p.sendSystemMessage(Component.literal("[Chrono] This Echo is no longer linked to an active timeline."));
+    }
+    static String itemName(ItemStack s){return s.isEmpty()?"empty hand":s.getHoverName().getString();}
+    static String coords(BlockPos p){return p.getX()+", "+p.getY()+", "+p.getZ();}
+    static int groundDrop(FakePlayer f,ItemStack wanted,int count,CompoundTag action){
+        int left=count;
+        for(int i=0;i<36&&left>0;i++){ItemStack st=f.getInventory().getItem(i);if(!matches(st,wanted))continue;
+            int n=Math.min(left,st.getCount());ItemStack removed=st.copyWithCount(n);
+            ItemEntity drop=f.drop(removed,false);if(drop==null)continue;
+            drop.setDeltaMovement(action.getDouble("vx"),action.getDouble("vy"),action.getDouble("vz"));st.shrink(n);left-=n;
+        }
+        return count-left;
+    }
+    static int groundPickup(FakePlayer f,ServerLevel l,ItemStack wanted,int count,CompoundTag action){
+        int left=count;
+        // Pick only nearby matching physical stacks; preserve their exact durability and properties.
+        Vec3 recorded=new Vec3(action.getDouble("ix"),action.getDouble("iy"),action.getDouble("iz"));
+        List<ItemEntity> items=l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.25),e->!e.hasPickUpDelay()&&matches(e.getItem(),wanted));
+        items.sort(Comparator.comparingDouble(e->e.position().distanceToSqr(recorded)));
+        for(ItemEntity e:items){if(left<=0)break;ItemStack st=e.getItem();int n=Math.min(left,st.getCount());ItemStack portion=st.copyWithCount(n);f.getInventory().add(portion);int moved=n-portion.getCount();if(moved<=0)continue;st.shrink(moved);left-=moved;if(st.isEmpty())e.discard();else e.setItem(st.copy());}
+        return count-left;
+    }
+    static void particles(ServerLevel l,Vec3 pos,int phase,int tint,float yaw){
+        int rgb=TINTS[Math.floorMod(tint,TINTS.length)];
+        if(tint==0)rgb=0xB085FF;
+        DustParticleOptions dust=new DustParticleOptions(new Vector3f(((rgb>>16)&255)/255f,((rgb>>8)&255)/255f,(rgb&255)/255f),.85f);
+        double angle=Math.toRadians(yaw);double c=Math.cos(angle),sn=Math.sin(angle);
+        // Outline six body regions from feet to head; particles converge on the silhouette.
+        for(int i=0;i<12;i++){int part=(i+phase/2)%6;double x,y,z=(l.random.nextDouble()-.5)*.22;
+            if(part<2){x=(part==0?-.13:.13)+(l.random.nextDouble()-.5)*.16;y=l.random.nextDouble()*.7;}
+            else if(part<4){x=(part==2?-.36:.36)+(l.random.nextDouble()-.5)*.14;y=.7+l.random.nextDouble()*.65;}
+            else if(part==4){x=(l.random.nextDouble()-.5)*.44;y=.72+l.random.nextDouble()*.6;}
+            else{x=(l.random.nextDouble()-.5)*.43;y=1.32+l.random.nextDouble()*.46;}
+            l.sendParticles(dust,pos.x+x*c-z*sn,pos.y+y,pos.z+x*sn+z*c,1,.015,.015,.015,0);
+        }
+    }
     static void levelTick(LevelTickEvent.Post e){
         if(!(e.getLevel() instanceof ServerLevel l))return;WorldData d=world(l);
         for(int i=d.echoes.size()-1;i>=0;i--){CompoundTag a=d.echoes.getCompound(i);try{if(step(l,a)){d.echoes.remove(i);}d.setDirty();}catch(Exception ex){LogUtils.getLogger().error("Chrono Factory Echo replay failed",ex);a.putBoolean("dismiss",true);d.setDirty();}}
@@ -289,64 +364,98 @@ public final class ChronoFactory {
         CompoundTag position=a.getCompound("position");Vec3 here=vec(position);if(!l.hasChunkAt(BlockPos.containing(here)))return false;
         ServerPlayer owner=l.getServer().getPlayerList().getPlayer(a.getUUID("owner"));
         ItemStack watch=owner==null?ItemStack.EMPTY:find(owner,a.getUUID("watch"));
-        ArmorStand stand=a.hasUUID("stand")&&l.getEntity(a.getUUID("stand")) instanceof ArmorStand st?st:null;
+        // Migrate old alpha worlds: remove the previous armor-stand proxy.
+        if(a.hasUUID("stand")){Entity old=l.getEntity(a.getUUID("stand"));if(old instanceof ArmorStand)old.discard();a.remove("stand");}
+        EchoEntity echo=a.hasUUID("entity")&&l.getEntity(a.getUUID("entity")) instanceof EchoEntity en?en:null;
         FakePlayer f=FakePlayerFactory.get(l,new GameProfile(a.getUUID("id"),"ChronoEcho"));f.getInventory().clearContent();f.getInventory().load(a.getList("inventory",Tag.TAG_COMPOUND));f.setPos(here.x,here.y,here.z);f.setOnGround(true);f.setYRot(position.getFloat("yaw"));f.setXRot(position.getFloat("pitch"));f.setShiftKeyDown(position.getBoolean("sneak"));
         if(a.getBoolean("dismiss")||(!watch.isEmpty()&&!a.getBoolean("creative")&&energy(watch)<=0)){
-            for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack s=f.getInventory().getItem(i);if(!s.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,s.copy()));}
-            f.getInventory().clearContent();if(stand!=null)stand.discard();return true;
+            for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack st=f.getInventory().getItem(i);if(!st.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,st.copy()));}
+            f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
-        if(owner==null||watch.isEmpty()){f.getInventory().clearContent();return false;}
-        if(stand==null){stand=new ArmorStand(l,here.x,here.y,here.z);stand.setNoGravity(true);stand.setInvulnerable(true);CompoundTag marker=new CompoundTag();marker.putBoolean("Marker",true);stand.readAdditionalSaveData(marker);stand.setNoGravity(true);stand.setInvulnerable(true);stand.setShowArms(true);stand.setCustomName(Component.literal(a.getString("name")+" [Echo]"));stand.setCustomNameVisible(true);stand.addTag("chronofactory_echo");l.addFreshEntity(stand);a.putUUID("stand",stand.getUUID());}
-        ListTag actions=timeline(a.getCompound("timeline"));if(actions.isEmpty())return true;
-        int index=a.getInt("index")%actions.size();CompoundTag action=actions.getCompound(index);String type=action.getString("type");Vec3 target=vec(action);boolean done=false;
-        if(!l.hasChunkAt(BlockPos.containing(target))){f.getInventory().clearContent();return false;}
-        if("wait".equals(type)){
-            int waited=a.getInt("waited")+1;a.putInt("waited",waited);done=waited>=action.getInt("ticks");
+        if(owner==null||watch.isEmpty()){a.putString("reason","Owner or Timekeeper unavailable");f.getInventory().clearContent();return false;}
+        CompoundTag tl=a.getCompound("timeline");ListTag actions=timeline(tl);if(actions.isEmpty()){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
+        int color=tint(tl);
+        // At the end of a timeline, fade out and reappear at the initial position.
+        // Logical inventory belongs to the loop and is never regenerated by visual remanifestation.
+        if(a.getInt("index")>=actions.size()){
+            int fade=a.getInt("fade")+1;a.putInt("fade",fade);a.putString("reason","Loop complete - remanifesting");
+            if(echo!=null)echo.visual(color,Math.max(0,24-fade*3),false,a.getFloat("walkPhase"),ItemStack.EMPTY,false,position.getFloat("pitch"));
+            if(fade%2==0)particles(l,here,fade,color,position.getFloat("yaw"));
+            if(fade>=8){
+                CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);
+            }
+            f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
+        }
+        if(echo==null){
+            echo=new EchoEntity(ECHO.get(),l);echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));echo.setIdentity(a.getUUID("owner"),a.getUUID("id"));echo.setCustomName(Component.literal(tl.getString("name")));echo.setCustomNameVisible(false);echo.visual(color,0,false,0,ItemStack.EMPTY,false,position.getFloat("pitch"));
+            if(!l.addFreshEntity(echo)){a.putString("reason","Unable to manifest Echo entity");f.getInventory().clearContent();return false;}
+            a.putUUID("entity",echo.getUUID());a.putInt("phase",0);
+        }
+        int phase=a.getInt("phase");
+        if(phase<24){
+            phase++;a.putInt("phase",phase);a.putString("reason","Manifesting");
+            echo.visual(color,phase,false,a.getFloat("walkPhase"),ItemStack.EMPTY,false,position.getFloat("pitch"));
+            if(phase%2==0)particles(l,here,phase,color,position.getFloat("yaw"));
+            f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-8);return false;
+        }
+        int index=a.getInt("index");CompoundTag action=actions.getCompound(index);String type=action.getString("type");Vec3 target=vec(action);boolean done=false,working=false,walking=false,swung=false;
+        String reason="Waiting: "+type;
+        ItemStack wanted=template(action,l);
+        if(!l.hasChunkAt(BlockPos.containing(target))){reason="Waiting for recorded chunk to load";}
+        else if("wait".equals(type)){
+            int waited=a.getInt("waited")+1;a.putInt("waited",waited);done=waited>=action.getInt("ticks");working=true;reason="Recorded pause ("+waited+"/"+action.getInt("ticks")+" ticks)";
         }else if("move".equals(type)){
             Vec3 diff=target.subtract(here);double distance=diff.length();Vec3 next=distance<=.3?target:here.add(diff.scale(.3/distance));
-            if(!l.getBlockCollisions(f,f.getBoundingBox().move(next.subtract(here))).iterator().hasNext()){position=action.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);a.put("position",position);here=next;done=distance<=.3;}
+            if(!l.getBlockCollisions(f,f.getBoundingBox().move(next.subtract(here))).iterator().hasNext()){
+                position=action.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);a.put("position",position);walking=next.distanceTo(here)>.01;here=next;done=distance<=.3;working=true;reason="Following recorded route";
+            }else reason="Route obstructed near "+coords(BlockPos.containing(next));
+        }else if("drop".equals(type)||"pickup".equals(type)){
+            int count=action.getInt("count"),remaining=count-a.getInt("transferred");
+            int moved="drop".equals(type)?groundDrop(f,wanted,remaining,action):groundPickup(f,l,wanted,remaining,action);
+            a.putInt("transferred",a.getInt("transferred")+moved);done=a.getInt("transferred")>=count;working=moved>0;
+            reason="drop".equals(type)?"Missing "+(count-a.getInt("transferred"))+" x "+itemName(wanted)+" to drop":"Waiting for "+(count-a.getInt("transferred"))+" x "+itemName(wanted)+" on the ground, or free inventory space";
+            swung=moved>0;
         }else{
-            BlockPos pos=BlockPos.of(action.getLong("pos"));ItemStack wanted=template(action,l);
-            if(l.hasChunkAt(pos)&&here.distanceToSqr(Vec3.atCenterOf(pos))<=36){
-                if("transfer".equals(type)){
-                    IItemHandler h=handler(l,pos);
-                    // Simulate the entire output before committing to avoid repeating partial transfers.
-                    int n=action.getInt("count")-a.getInt("transferred");
-                    int moved=transfer(f,h,wanted,n,action.getBoolean("take"));
-                    a.putInt("transferred",a.getInt("transferred")+moved);
-                    done=a.getInt("transferred")>=action.getInt("count");
-                }else if(equip(f,wanted)){
-                    f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
-                    BlockState state=l.getBlockState(pos);String block=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                    if(block.equals(action.getString("block"))){
-                        if("break".equals(type)){
-                            float progress=a.getFloat("progress")+state.getDestroyProgress(f,l,pos);a.putFloat("progress",progress);
-                            if(progress>=1){done=f.gameMode.destroyBlock(pos);if(done)collect(f,l,pos);}
-                        }else if("use".equals(type)){
-                            InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));done=result.consumesAction();
-                            if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
-                        }
-                    }
-                }
+            BlockPos pos=BlockPos.of(action.getLong("pos"));
+            if(!l.hasChunkAt(pos))reason="Target chunk is not loaded";
+            else if(here.distanceToSqr(Vec3.atCenterOf(pos))>36)reason="Target out of reach at "+coords(pos);
+            else if("transfer".equals(type)){
+                IItemHandler h=handler(l,pos);
+                int n=action.getInt("count")-a.getInt("transferred");
+                int moved=transfer(f,h,wanted,n,action.getBoolean("take"));a.putInt("transferred",a.getInt("transferred")+moved);
+                done=a.getInt("transferred")>=action.getInt("count");working=moved>0;
+                reason=h==null?"No accessible inventory at "+coords(pos):action.getBoolean("take")?"Waiting to withdraw "+(action.getInt("count")-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+coords(pos):"Waiting to deposit "+(action.getInt("count")-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+coords(pos)+" (missing items or destination full)";
+            }else if(!equip(f,wanted))reason="Missing required item: "+itemName(wanted);
+            else{
+                f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+                BlockState state=l.getBlockState(pos);String block=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+                if(!block.equals(action.getString("block")))reason="Expected "+action.getString("block")+" at "+coords(pos)+", found "+block;
+                else if("break".equals(type)){
+                    float progress=a.getFloat("progress")+state.getDestroyProgress(f,l,pos);a.putFloat("progress",progress);working=progress>0;swung=working;
+                    reason="Mining "+block+" at "+coords(pos)+" ("+Math.min(100,(int)(progress*100))+"%)";
+                    if(progress>=1){done=f.gameMode.destroyBlock(pos);if(done&&!tl.getBoolean("explicitPickup"))collect(f,l,pos);if(!done){working=false;reason="Block break denied at "+coords(pos);}}
+                }else if("use".equals(type)){
+                    InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));done=result.consumesAction();working=done;swung=done;
+                    if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
+                    reason="Interaction rejected at "+coords(pos)+" using "+itemName(wanted);
+                }else reason="Unsupported action: "+type;
             }
         }
-        if(done){a.putInt("index",(index+1)%actions.size());a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);}
-        double moved=stand.position().distanceTo(here);
-        stand.setPos(here.x,here.y,here.z);stand.setYRot(position.getFloat("yaw"));
-        if(moved>.01){
-            float phase=a.getFloat("walkPhase")+(float)moved*6; a.putFloat("walkPhase",phase);
-            float swing=(float)Math.sin(phase)*38;
-            stand.setLeftLegPose(new Rotations(swing,0,0));stand.setRightLegPose(new Rotations(-swing,0,0));
-            stand.setLeftArmPose(new Rotations(-swing,0,-5));stand.setRightArmPose(new Rotations(swing,0,5));
-        }else if("wait".equals(type)||done){
-            stand.setLeftLegPose(new Rotations(0,0,0));stand.setRightLegPose(new Rotations(0,0,0));
-            stand.setLeftArmPose(new Rotations(0,0,-5));stand.setRightArmPose(new Rotations(0,0,5));
-        }
-        // Do not equip the visual proxy with real stacks: it must never drop duplicate tools.
-        stand.setCustomName(Component.literal(a.getString("name")+(done||"move".equals(type)?" [Echo]":" [Stasis]")));
+        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);reason="Completed "+type;}
+        a.putString("reason",reason);
+        double moved=echo.position().distanceTo(here);
+        echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));
+        if(walking)a.putFloat("walkPhase",a.getFloat("walkPhase")+(float)moved*5);
+        echo.visual(color,24,walking,a.getFloat("walkPhase"),f.getMainHandItem(),swung,position.getFloat("pitch"));
+        echo.setCustomName(Component.literal(tl.getString("name")));
         a.put("inventory",f.getInventory().save(new ListTag()));f.getInventory().clearContent();
-        if(!a.getBoolean("creative"))energy(watch,energy(watch)-(done||"move".equals(type)?8:2));
+        if(!a.getBoolean("creative"))energy(watch,energy(watch)-(working||done?8:2));
         return false;
+    }
+    static void changeTint(ServerPlayer p,UUID key,CompoundTag tl,int value){
+        tl.putInt("tint",value);UUID tid=tl.getUUID("id");
+        for(ServerLevel l:p.server.getAllLevels()){WorldData d=world(l);for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("owner").equals(p.getUUID())&&a.getUUID("watch").equals(key)&&a.getCompound("timeline").getUUID("id").equals(tid)){a.getCompound("timeline").putInt("tint",value);d.setDirty();}}}
     }
     static void sendUi(ServerPlayer p,ItemStack s){
         if(!watch(s))return;
@@ -355,12 +464,12 @@ public final class ChronoFactory {
         summary.putBoolean("creative",creative(s));summary.putBoolean("retain",t.getBoolean("retain"));summary.putInt("energy",energy(s));
         summary.putBoolean("recording",recording);summary.putBoolean("otherRecording",rec!=null&&!recording);
         summary.putInt("steps",recording?rec.actions.size():t.contains("current")?timeline(t.getCompound("current")).size():0);
-        summary.putBoolean("current",t.contains("current"));
+        summary.putBoolean("current",t.contains("current"));summary.putInt("tint",t.contains("current")?tint(t.getCompound("current")):tint(t));
         summary.putBoolean("currentActive",t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")));
         ListTag entries=new ListTag(), saved=t.getList("saved",Tag.TAG_COMPOUND);
         int count=0;
         for(Tag x:saved){CompoundTag tl=(CompoundTag)x,entry=new CompoundTag();boolean running=active(p,key,tl.getUUID("id"));
-            entry.putString("name",tl.getString("name"));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
+            entry.putString("name",tl.getString("name"));entry.putInt("tint",tint(tl));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
         if(summary.getBoolean("currentActive"))count++;
         summary.putInt("activeCount",count);summary.put("saved",entries);
         PacketDistributor.sendToPlayer(p,new UiState(key,summary));
@@ -376,6 +485,7 @@ public final class ChronoFactory {
         }else if(r==null){
             ListTag saved=t.getList("saved",Tag.TAG_COMPOUND);int i=cmd.index();
             switch(cmd.action()){
+                case "tint" -> {if(i==-1){if(t.contains("current")){CompoundTag tl=t.getCompound("current");changeTint(p,cmd.key(),tl,(tint(tl)+1)%TINTS.length);t.put("current",tl);}else t.putInt("tint",(tint(t)+1)%TINTS.length);put(s,t);}else if(creative(s)&&i>=0&&i<saved.size()){CompoundTag tl=saved.getCompound(i);changeTint(p,cmd.key(),tl,(tint(tl)+1)%TINTS.length);t.put("saved",saved);put(s,t);}}
                 case "retain" -> {t.putBoolean("retain",!t.getBoolean("retain"));put(s,t);}
                 case "manifest" -> {if(t.contains("current"))manifest(p,s,t.getCompound("current"));}
                 case "dismiss_current" -> {if(t.contains("current")){dismiss(p,cmd.key(),t.getCompound("current").getUUID("id"));if(!t.getBoolean("retain")){t.remove("current");put(s,t);}}}
