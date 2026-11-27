@@ -50,7 +50,8 @@ public final class ClientControls{
     }
     public static void inspect(ChronoFactory.InspectState msg){
         Minecraft mc=Minecraft.getInstance();
-        if(mc.screen instanceof EchoInspectScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
+        if(mc.screen instanceof EchoInventoryScreen screen&&screen.getMenu().key.equals(msg.key()))screen.update(msg.state());
+        else if(mc.screen instanceof EchoInspectScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
         else if(msg.open())mc.setScreen(new EchoInspectScreen(msg.key(),msg.state()));
     }
     public static void show(ChronoFactory.UiState msg){

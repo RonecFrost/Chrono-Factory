@@ -64,13 +64,14 @@ public final class ChronoFactory {
     static int tint(CompoundTag t){return Math.floorMod(t.getInt("tint"),TINTS.length);}
     static final Map<UUID,Recording> RECORDINGS=new HashMap<>();
     public ChronoFactory(IEventBus bus) {
-        ITEMS.register(bus);ENTITIES.register(bus);TemporalRelay.register(bus);
+        ITEMS.register(bus);ENTITIES.register(bus);TemporalRelay.register(bus);EchoInventoryMenu.TYPES.register(bus);
         bus.addListener((EntityAttributeCreationEvent e)->e.put(ECHO.get(),Mob.createMobAttributes().build()));
         bus.addListener(ChronoFactory::registerNetwork);
         bus.addListener(ChronoFactory::capabilities);
         bus.addListener((BuildCreativeModeTabContentsEvent e)->{if(e.getTabKey()==CreativeModeTabs.TOOLS_AND_UTILITIES){e.accept(PERSONAL.get());e.accept(CREATIVE.get());e.accept(TemporalRelay.ITEM.get());}});
         IEventBus game=NeoForge.EVENT_BUS;
         game.addListener(ChronoFactory::playerTick);
+        game.addListener(ChronoFactory::commands);
         game.addListener(ChronoFactory::levelTick);
         game.addListener(ChronoFactory::onUse);
         game.addListener(ChronoFactory::onBreak);
@@ -152,7 +153,7 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("9");
+        var registrar=e.registrar("10");
         registrar.playToServer(RepeatSetting.TYPE,RepeatSetting.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)setRepeats(p,msg);}));
         registrar.playToServer(TemporalRelay.Command.TYPE,TemporalRelay.Command.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)TemporalRelay.command(p,msg);}));
         registrar.playToClient(TemporalRelay.State.TYPE,TemporalRelay.State.CODEC,(msg,ctx)->ctx.enqueueWork(()->ClientControls.relay(msg)));
@@ -196,6 +197,26 @@ public final class ChronoFactory {
         }
     }
     static void say(ServerPlayer p,String s){p.displayClientMessage(Component.literal("[Chrono] "+s),true);}
+    static void distinctWatches(ServerPlayer p){
+        // Identity is attached to the physical stack, not to the watch item type.
+        // Creative cloning can duplicate custom data, including its UUID.
+        Set<UUID> seen=new HashSet<>();
+        for(ServerLevel l:p.server.getAllLevels())for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(a.hasUUID("relayId"))seen.add(a.getUUID("watch"));}
+        // Preserve the first physical instance, prioritizing a currently recording watch.
+        Recording r=RECORDINGS.get(p.getUUID());int priority=-1;
+        if(r!=null)for(int i=0;i<p.getInventory().getContainerSize();i++){ItemStack st=p.getInventory().getItem(i);if(watch(st)&&data(st).getBoolean("recording")&&id(st).equals(r.watch)){priority=i;break;}}
+        if(priority>=0)seen.add(id(p.getInventory().getItem(priority)));
+        for(int i=0;i<p.getInventory().getContainerSize();i++){
+            ItemStack st=p.getInventory().getItem(i);if(!watch(st)||i==priority)continue;UUID key=id(st);
+            if(!seen.add(key)){
+                CompoundTag t=data(st);UUID replacement=UUID.randomUUID();t.putUUID("id",replacement);t.remove("recording");
+                // Preserve any recording snapshot already physically present on the copied stack, but detach it from all running Echoes.
+                if(t.contains("current"))t.getCompound("current").putUUID("id",UUID.randomUUID());
+                for(Tag x:t.getList("saved",Tag.TAG_COMPOUND))((CompoundTag)x).putUUID("id",UUID.randomUUID());
+                put(st,t);seen.add(replacement);p.getInventory().setChanged();
+            }
+        }
+    }
     static ItemStack find(ServerPlayer p,UUID key){
         for(int i=0;i<p.getInventory().getContainerSize();i++){ItemStack s=p.getInventory().getItem(i);if(watch(s)&&data(s).hasUUID("id")&&data(s).getUUID("id").equals(key))return s;}
         return ItemStack.EMPTY;
@@ -270,12 +291,12 @@ public final class ChronoFactory {
         void move(ServerPlayer p){CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){a.putInt("moveTicks",Math.max(1,Math.min(4,tick-lastMoveTick)));add(a);last=a;lastMoveTick=tick;}}
     }
     static void cycle(ServerPlayer p){
-        ItemStack s=p.getMainHandItem();if(!watch(s))return;
+        distinctWatches(p);ItemStack s=p.getMainHandItem();if(!watch(s))return;
         UUID key=id(s);Recording r=RECORDINGS.get(p.getUUID());
         if(r!=null){if(r.watch.equals(key))finish(p,true);else say(p,"Another Timekeeper is recording.");return;}
         if(p.getPersistentData().contains(BACKUP)){restore(p);s=p.getMainHandItem();if(!watch(s)){say(p,"Recovered your previous inventory. Select your Timekeeper to record.");return;}key=id(s);}
         CompoundTag t=data(s);
-        if((!creative(s)&&active(p,key,null))||(creative(s)&&t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")))){dismiss(p,key,creative(s)?t.getCompound("current").getUUID("id"):null);if(!t.getBoolean("retain")){t.remove("current");put(s,t);}say(p,"Timeline dismissed.");return;}
+        if((!creative(s)&&active(p,key,null))||(creative(s)&&t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")))){dismiss(p,key,creative(s)?t.getCompound("current").getUUID("id"):null);say(p,"Timeline dismissed. Clear it after dismissal if desired.");return;}
         if(t.contains("current")){manifest(p,s,t.getCompound("current"));return;}
         if(p.isSpectator()){say(p,"Spectators cannot record.");return;}
         if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
@@ -488,6 +509,7 @@ public final class ChronoFactory {
     }
     static void playerTick(PlayerTickEvent.Post e){
         if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
+        if(p.tickCount%20==0)distinctWatches(p);
         Recording r=RECORDINGS.get(p.getUUID());
         if(r!=null){
             if(!r.dimension.equals(p.level().dimension().location().toString())||find(p,r.watch).isEmpty()){finish(p,false);return;}
@@ -514,7 +536,7 @@ public final class ChronoFactory {
         for(ServerLevel l:server.getAllLevels())for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("watch").equals(key))return true;}return false;
     }
     static boolean active(ServerPlayer p,UUID key,UUID timeline){
-        for(ServerLevel l:p.server.getAllLevels())for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(!a.getBoolean("dismiss")&&a.getUUID("owner").equals(p.getUUID())&&a.getUUID("watch").equals(key)&&(timeline==null||a.getCompound("timeline").getUUID("id").equals(timeline)))return true;}return false;
+        for(ServerLevel l:p.server.getAllLevels())for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("owner").equals(p.getUUID())&&a.getUUID("watch").equals(key)&&(timeline==null||a.getCompound("timeline").getUUID("id").equals(timeline)))return true;}return false;
     }
     static void dismiss(ServerPlayer p,UUID key,UUID timeline){
         for(ServerLevel l:p.server.getAllLevels()){WorldData d=world(l);for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("owner").equals(p.getUUID())&&a.getUUID("watch").equals(key)&&(timeline==null||a.getCompound("timeline").getUUID("id").equals(timeline))){a.putBoolean("dismiss",true);d.setDirty();}}}
@@ -532,10 +554,13 @@ public final class ChronoFactory {
     static boolean validTimeline(CompoundTag tl){
         return !timeline(tl).isEmpty()&&(!tl.getBoolean("strict")||(tl.getIntArray("raw").length>=3&&tl.getIntArray("motion").length==tl.getIntArray("raw").length));
     }
+    static boolean relayTimelineActive(net.minecraft.server.MinecraftServer server,UUID watch,UUID timeline){
+        for(ServerLevel l:server.getAllLevels())for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("watch").equals(watch)&&(timeline==null||a.getCompound("timeline").getUUID("id").equals(timeline)))return true;}return false;
+    }
     static boolean manifestRelay(ServerLevel l,TemporalRelay.Dock dock,CompoundTag tl){
         if(!validTimeline(tl)||!l.dimension().location().toString().equals(tl.getString("dimension")))return false;
         ListTag actions=timeline(tl);if(!l.hasChunkAt(BlockPos.containing(vec(actions.getCompound(0)))))return false;
-        ItemStack s=dock.stack;if(!watch(s)||(!creative(s)&&energy(s)<=0)||watchActive(l.getServer(),id(s)))return false;
+        ItemStack s=dock.stack;if(!watch(s)||(!creative(s)&&energy(s)<=0)||relayTimelineActive(l.getServer(),id(s),creative(s)?tl.getUUID("id"):null))return false;
         CompoundTag a=new CompoundTag();a.putUUID("id",UUID.randomUUID());a.putUUID("owner",dock.owner);a.putUUID("watch",id(s));a.putString("name",dock.ownerName);
         a.put("timeline",tl.copy());a.putBoolean("creative",creative(s));a.put("position",actions.getCompound(0).copy());a.put("inventory",new ListTag());a.putString("reason","Manifesting");
         a.putLong("relayPos",dock.getBlockPos().asLong());a.putUUID("relayId",dock.relayId);
@@ -620,7 +645,7 @@ public final class ChronoFactory {
     }
     static void sweepItems(FakePlayer f,ServerLevel l,Vec3 here){
         f.setPos(here.x,here.y,here.z);
-        for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(.65,.35,.65),it->!it.hasPickUpDelay()&&!watch(it.getItem()))){
+        for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(.975,.525,.975),it->!it.hasPickUpDelay()&&!watch(it.getItem()))){
             ItemStack stack=e.getItem(),part=stack.copy();int before=part.getCount();f.getInventory().add(part);int moved=before-part.getCount();
             if(moved>0){stack.shrink(moved);if(stack.isEmpty())e.discard();else e.setItem(stack.copy());}
         }
@@ -666,7 +691,8 @@ public final class ChronoFactory {
         }return true;
     }
     static void collect(FakePlayer f,ServerLevel l,BlockPos pos){for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,new AABB(pos).inflate(1.2))){ItemStack s=e.getItem();if(f.getInventory().add(s)&&s.isEmpty())e.discard();else e.setItem(s);}}
-    static void describe(ServerPlayer p,EchoEntity entity){inspect(p,entity.loopId(),true);}
+    static void describe(ServerPlayer p,EchoEntity entity){EchoInventoryMenu.open(p,entity);}
+    static CompoundTag echoData(ServerLevel l,UUID key){for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("id").equals(key))return a;}return null;}
     static void inspect(ServerPlayer p,UUID key,boolean open){
         CompoundTag state=new CompoundTag();state.putBoolean("available",false);
         WorldData d=world(p.serverLevel());
@@ -704,7 +730,7 @@ public final class ChronoFactory {
         int left=count;
         // Pick only nearby matching physical stacks; preserve their exact durability and properties.
         Vec3 recorded=new Vec3(action.getDouble("ix"),action.getDouble("iy"),action.getDouble("iz"));
-        List<ItemEntity> items=l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.25),e->!e.hasPickUpDelay()&&matches(e.getItem(),wanted));
+        List<ItemEntity> items=l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.875),e->!e.hasPickUpDelay()&&matches(e.getItem(),wanted));
         items.sort(Comparator.comparingDouble(e->e.position().distanceToSqr(recorded)));
         for(ItemEntity e:items){if(left<=0)break;ItemStack st=e.getItem();int n=Math.min(left,st.getCount());ItemStack portion=st.copyWithCount(n);f.getInventory().add(portion);int moved=n-portion.getCount();if(moved<=0)continue;st.shrink(moved);left-=moved;if(st.isEmpty())e.discard();else e.setItem(st.copy());}
         return count-left;
@@ -723,6 +749,25 @@ public final class ChronoFactory {
             l.sendParticles(dust,pos.x+x*c-z*sn,pos.y+y,pos.z+x*sn+z*c,1,.015,.015,.015,0);
         }
     }
+    static void commands(net.neoforged.neoforge.event.RegisterCommandsEvent e){
+        e.getDispatcher().register(net.minecraft.commands.Commands.literal("chronofactory")
+            .then(net.minecraft.commands.Commands.literal("dismissall")
+                .executes(c->dismissCommand(c.getSource(),false))
+                .then(net.minecraft.commands.Commands.literal("all").requires(src->src.hasPermission(2)).executes(c->dismissCommand(c.getSource(),true)))));
+    }
+    static int dismissCommand(net.minecraft.commands.CommandSourceStack source,boolean all){
+        ServerPlayer p=source.getEntity() instanceof ServerPlayer sp?sp:null;
+        if(p==null&&!source.hasPermission(2))return 0;
+        int count=0;for(ServerLevel l:source.getServer().getAllLevels()){
+            WorldData d=world(l);Set<UUID> relayIds=new HashSet<>();
+            for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;if(!all&&p!=null&&!a.getUUID("owner").equals(p.getUUID()))continue;
+                a.putBoolean("dismiss",true);count++;d.setDirty();
+                if(a.hasUUID("relayId")&&relayIds.add(a.getUUID("relayId"))){BlockPos pos=BlockPos.of(a.getLong("relayPos"));if(l.hasChunkAt(pos)&&l.getBlockEntity(pos) instanceof TemporalRelay.Dock dock&&dock.relayId.equals(a.getUUID("relayId")))dock.cancel(l);}
+            }
+            for(Entity entity:l.getAllEntities())if(entity instanceof EchoEntity echo&&(all||p==null||echo.ownerId().equals(p.getUUID()))&&echoData(l,echo.loopId())==null){echo.discard();count++;}
+        }
+        final int total=count;source.sendSuccess(()->Component.literal("Chrono Factory: dismissed "+total+" Echoes (unloaded Echoes will be removed when loaded)."),false);return count;
+    }
     static void levelTick(LevelTickEvent.Post e){
         if(!(e.getLevel() instanceof ServerLevel l))return;WorldData d=world(l);
         for(int i=d.echoes.size()-1;i>=0;i--){CompoundTag a=d.echoes.getCompound(i);try{if(step(l,a)){d.echoes.remove(i);}d.setDirty();}catch(Exception ex){LogUtils.getLogger().error("Chrono Factory Echo replay failed",ex);a.putBoolean("dismiss",true);d.setDirty();}}
@@ -739,15 +784,18 @@ public final class ChronoFactory {
             else if(repeats(a.getCompound("timeline"))==0&&!l.hasNeighborSignal(dockPos))a.putBoolean("dismiss",true);
         }
         ItemStack watch=docked?(dock==null?ItemStack.EMPTY:dock.stack):owner==null?ItemStack.EMPTY:find(owner,a.getUUID("watch"));
+        if(!docked&&owner!=null&&watch.isEmpty())a.putBoolean("dismiss",true);
         // Migrate old alpha worlds: remove the previous armor-stand proxy.
         if(a.hasUUID("stand")){Entity old=l.getEntity(a.getUUID("stand"));if(old instanceof ArmorStand)old.discard();a.remove("stand");}
         EchoEntity echo=a.hasUUID("entity")&&l.getEntity(a.getUUID("entity")) instanceof EchoEntity en?en:null;
         FakePlayer f=a.getCompound("timeline").getBoolean("strict")?StrictReplay.player(l,a.getUUID("id")):FakePlayerFactory.get(l,new GameProfile(a.getUUID("id"),"ChronoEcho"));f.getInventory().clearContent();f.getInventory().load(a.getList("inventory",Tag.TAG_COMPOUND));f.setPos(here.x,here.y,here.z);f.setOnGround(true);f.setYRot(position.getFloat("yaw"));f.setXRot(position.getFloat("pitch"));f.setShiftKeyDown(position.getBoolean("sneak"));
         if(a.getBoolean("dismiss")||(!docked&&!watch.isEmpty()&&!a.getBoolean("creative")&&energy(watch)<=0)){
+            EchoInventoryMenu.closeFor(l,a.getUUID("id"));
             if(f instanceof StrictReplay.MacroPlayer macro){StrictReplay.restoreCursor(macro,a);StrictReplay.forget(macro,a);}
             for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack st=f.getInventory().getItem(i);if(!st.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,st.copy()));}
             f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
+        if(EchoInventoryMenu.isOpen(l,a.getUUID("id"))){a.putString("reason","Inventory open - playback paused");if(echo!=null)echo.visual(tint(a.getCompound("timeline")),24,false,a.getFloat("walkPhase"),echo.visualHeld(),false,position.getFloat("pitch"));f.getInventory().clearContent();if(!a.getBoolean("creative")&&!watch.isEmpty()){energy(watch,energy(watch)-2);if(dock!=null)dock.setChanged();}return false;}
         if((!docked&&owner==null)||watch.isEmpty()){a.putString("reason","Owner or Timekeeper unavailable");f.getInventory().clearContent();return false;}
         CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");ListTag actions=timeline(tl);if(actions.isEmpty()||(strict&&(tl.getIntArray("raw").length<3||tl.getIntArray("motion").length!=tl.getIntArray("raw").length))){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
         int color=tint(tl);
@@ -979,7 +1027,7 @@ public final class ChronoFactory {
     }
     static void sendUi(ServerPlayer p,ItemStack s){
         if(!watch(s))return;
-        UUID key=id(s);CompoundTag t=data(s), summary=new CompoundTag();
+        distinctWatches(p);UUID key=id(s);CompoundTag t=data(s), summary=new CompoundTag();
         Recording rec=RECORDINGS.get(p.getUUID());boolean recording=rec!=null&&rec.watch.equals(key);
         summary.putBoolean("creative",creative(s));summary.putBoolean("retain",t.getBoolean("retain"));summary.putInt("energy",energy(s));
         summary.putBoolean("recording",recording);summary.putBoolean("otherRecording",rec!=null&&!recording);
@@ -997,6 +1045,7 @@ public final class ChronoFactory {
     static void uiCommand(ServerPlayer p,UiCommand cmd){
         if("inspect".equals(cmd.action())){inspect(p,cmd.key(),false);return;}
         if("open".equals(cmd.action())){ItemStack held=p.getMainHandItem();if(watch(held))sendUi(p,held);return;}
+        distinctWatches(p);
         ItemStack s=find(p,cmd.key());if(s.isEmpty())return;
         CompoundTag t=data(s);Recording r=RECORDINGS.get(p.getUUID());
         if("cycle".equals(cmd.action())){
@@ -1027,11 +1076,11 @@ public final class ChronoFactory {
                 case "tint" -> {if(i==-1){if(t.contains("current")){CompoundTag tl=t.getCompound("current");changeTint(p,cmd.key(),tl,(tint(tl)+1)%TINTS.length);t.put("current",tl);}else t.putInt("tint",(tint(t)+1)%TINTS.length);put(s,t);}else if(creative(s)&&i>=0&&i<saved.size()){CompoundTag tl=saved.getCompound(i);changeTint(p,cmd.key(),tl,(tint(tl)+1)%TINTS.length);t.put("saved",saved);put(s,t);}}
                 case "retain" -> {t.putBoolean("retain",!t.getBoolean("retain"));put(s,t);}
                 case "manifest" -> {if(t.contains("current"))manifest(p,s,t.getCompound("current"));}
-                case "dismiss_current" -> {if(t.contains("current")){dismiss(p,cmd.key(),t.getCompound("current").getUUID("id"));if(!t.getBoolean("retain")){t.remove("current");put(s,t);}}}
-                case "clear" -> {if(t.contains("current"))dismiss(p,cmd.key(),t.getCompound("current").getUUID("id"));t.remove("current");put(s,t);}
+                case "dismiss_current" -> {if(t.contains("current"))dismiss(p,cmd.key(),t.getCompound("current").getUUID("id"));}
+                case "clear" -> {if(t.contains("current")&&active(p,cmd.key(),t.getCompound("current").getUUID("id")))say(p,"Dismiss this Echo before clearing its timeline.");else {t.remove("current");put(s,t);}}
                 case "save" -> {if(creative(s)&&t.contains("current")&&saved.size()<MAX_TIMELINES){saved.add(t.getCompound("current").copy());t.put("saved",saved);t.remove("current");put(s,t);}}
                 case "toggle" -> {if(creative(s)&&i>=0&&i<saved.size()){CompoundTag tl=saved.getCompound(i);if(active(p,cmd.key(),tl.getUUID("id")))dismiss(p,cmd.key(),tl.getUUID("id"));else manifest(p,s,tl);}}
-                case "delete" -> {if(creative(s)&&i>=0&&i<saved.size()){dismiss(p,cmd.key(),saved.getCompound(i).getUUID("id"));saved.remove(i);t.put("saved",saved);put(s,t);}}
+                case "delete" -> {if(creative(s)&&i>=0&&i<saved.size()){if(active(p,cmd.key(),saved.getCompound(i).getUUID("id")))say(p,"Dismiss this Echo before deleting its timeline.");else{saved.remove(i);t.put("saved",saved);put(s,t);}}}
                 case "dismiss_all" -> dismiss(p,cmd.key(),null);
                 case "manifest_all" -> {if(creative(s)){for(Tag x:saved)manifest(p,s,(CompoundTag)x);}}
                 default -> {}

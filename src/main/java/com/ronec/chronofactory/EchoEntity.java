@@ -49,6 +49,7 @@ public final class EchoEntity extends PathfinderMob {
     @Override public void push(double x,double y,double z){}
     @Override public void tick(){
         super.tick();setDeltaMovement(Vec3.ZERO);
+        if(level() instanceof net.minecraft.server.level.ServerLevel l&&tickCount%40==0&&ChronoFactory.echoData(l,loopId())==null){discard();return;}
         if(!level().isClientSide())return;
         if(!animationReady){
             clientPhase=walkPhase();clientLook=lookPitch();clientFade=phase();clientStride=walking()?.9f:0;animationReady=true;

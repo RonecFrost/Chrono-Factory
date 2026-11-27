@@ -12,7 +12,7 @@ public final class RelayScreen extends Screen{
     final BlockPos pos;private CompoundTag state;private int x,y,w,poll,page;private static final UUID NONE=new UUID(0,0);
     RelayScreen(BlockPos pos,CompoundTag state){super(Component.literal("Temporal Relay"));this.pos=pos;this.state=state;}
     private ListTag entries(){return state.getList("choices",Tag.TAG_COMPOUND);}
-    private UUID selected(){return state.hasUUID("selected")?state.getUUID("selected"):NONE;}
+    private UUID selected(){for(Tag e:entries()){CompoundTag t=(CompoundTag)e;if(t.getBoolean("selected"))return t.getUUID("id");}return NONE;}
     private CompoundTag choice(){for(Tag e:entries()){CompoundTag t=(CompoundTag)e;if(t.getUUID("id").equals(selected()))return t;}return new CompoundTag();}
     private boolean idle(){return state.getBoolean("available")&&state.getBoolean("allowed")&&!state.getBoolean("active")&&!state.getBoolean("pending");}
     private void send(String action,UUID id,int count){PacketDistributor.sendToServer(new TemporalRelay.Command(pos,action,id,count));}
@@ -23,12 +23,13 @@ public final class RelayScreen extends Screen{
         button(w-83,29,73,"Eject watch",()->send("eject",NONE,0),allowed&&state.contains("watch"));
         int max=Math.max(0,(entries().size()-1)/3);page=Math.min(page,max);
         for(int row=0;row<3;row++){int i=page*3+row;if(i>=entries().size())break;CompoundTag t=entries().getCompound(i);UUID id=t.getUUID("id");int n=t.getInt("repeats");
-            button(10,79+row*22,w-20,(id.equals(selected())?"> ":"")+font.plainSubstrByWidth(t.getString("name"),w-90)+" | "+(n==0?"Infinite":n+"x"),()->send("select",id,0),idle());
+            button(10,79+row*22,w-67,(t.getBoolean("selected")?"[x] ":"[ ] ")+font.plainSubstrByWidth(t.getString("name"),w-120)+(t.getBoolean("running")?" *":""),()->send("select",id,0),idle());
+            button(w-53,79+row*22,43,n==0?"Inf.":n+"x",()->minecraft.setScreen(new RepeatScreen(this,n,v->send("repeat",id,v))),idle());
         }
         button(10,147,30,"<",()->{page--;clearWidgets();init();},page>0);
         button(44,147,30,">",()->{page++;clearWidgets();init();},page<max);
-        button(w-134,147,124,"Set repeat count",()->{UUID id=selected();minecraft.setScreen(new RepeatScreen(this,choice().getInt("repeats"),n->send("repeat",id,n)));},idle()&&!selected().equals(NONE));
-        button(10,194,95,"Stop job",()->send("stop",NONE,0),allowed&&(state.getBoolean("active")||state.getBoolean("pending")));
+        
+        button(10,194,95,"Stop all jobs",()->send("stop",NONE,0),allowed&&(state.getBoolean("active")||state.getBoolean("pending")));
         button(w-76,194,66,"Close",this::onClose,true);
     }
     @Override public void tick(){if(++poll%10==0)send("poll",NONE,0);}
@@ -42,7 +43,7 @@ public final class RelayScreen extends Screen{
         g.drawString(font,state.getBoolean("powered")?"REDSTONE ON":"REDSTONE OFF",x+10,y+56,state.getBoolean("powered")?0xFFFF7373:0xFFAAAAAF,false);
         g.drawString(font,state.getBoolean("creative")?"Unlimited FE":state.getInt("energy")+" / 100000 FE",x+w-118,y+56,0xFFBB86FC,false);
         String reason=state.getBoolean("available")?state.getString("reason"):"Relay unavailable / out of range";
-        if(state.getBoolean("active"))reason="Cycle "+state.getInt("cycle")+" | "+reason;
+        
         int yy=y+172;for(var line:font.split(Component.literal(reason),w-20)){if(yy>y+184)break;g.drawString(font,line,x+10,yy,0xFFD0BEDF,false);yy+=10;}
         super.render(g,mx,my,p);
     }

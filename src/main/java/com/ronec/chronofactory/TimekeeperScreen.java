@@ -11,7 +11,7 @@ public final class TimekeeperScreen extends Screen {
     final UUID key;
     private CompoundTag state;
     private int left,top,w,h,page;
-    private int rows=3;
+    private int rows=3,poll;
     private static final int CLOSED=-2;
     private int popupIndex=CLOSED,popupX,popupY,popupW=114,popupSelected,popupFocus;
     private final int optionHeight=17;
@@ -44,7 +44,7 @@ public final class TimekeeperScreen extends Screen {
             else if(hasCurrent())send("manifest",0);
             else {send("cycle",0);onClose();}
         },recording()||unlocked);
-        button(20+half,78,half,recording()?"Cancel recording":"Clear recording",()->send(recording()?"cancel":"clear",0),recording()||(unlocked&&hasCurrent()));
+        button(20+half,78,half,recording()?"Cancel recording":"Clear recording",()->send(recording()?"cancel":"clear",0),recording()||(unlocked&&hasCurrent()&&!running()));
         button(10,103,half,"Retain: "+(state.getBoolean("retain")?"ON":"OFF"),()->send("retain",0),unlocked);
         button(20+half,103,half,"Tint: "+ChronoFactory.TINT_NAMES[state.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(-1,20+half,103,half,state.getInt("tint")),unlocked);
         button(w-137,17,127,state.getBoolean("strict")?"Mode: Input":"Mode: Adaptive",()->send("mode",-1),unlocked&&!running());
@@ -63,7 +63,7 @@ public final class TimekeeperScreen extends Screen {
                 button(w-212,y,35,entry.getBoolean("strict")?"Input":"Adapt.",()->send("mode",i),unlocked&&!entry.getBoolean("active"));
                 button(w-174,y,50,ChronoFactory.TINT_NAMES[entry.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(i,w-174,y,50,entry.getInt("tint")),unlocked);
                 button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->send("toggle",i),unlocked);
-                button(w-44,y,34,"Del",()->send("delete",i),unlocked);
+                button(w-44,y,34,"Del",()->send("delete",i),unlocked&&!entry.getBoolean("active"));
             }
             button(10,h-25,32,"<",()->{page--;clearWidgets();init();},page>0);
             button(46,h-25,32,">",()->{page++;clearWidgets();init();},page<max);
@@ -152,5 +152,6 @@ public final class TimekeeperScreen extends Screen {
         super.render(g,mouseX,mouseY,partialTick);
         renderTintDropdown(g,mouseX,mouseY);
     }
+    @Override public void tick(){if(++poll%20==0&&popupIndex==CLOSED&&(running()||state.getInt("activeCount")>0))send("refresh",0);}
     @Override public boolean isPauseScreen(){return false;}
 }

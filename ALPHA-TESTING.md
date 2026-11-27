@@ -1,4 +1,4 @@
-# Chrono Factory 0.5.0-alpha
+# Chrono Factory 0.5.1-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -50,3 +50,10 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Right-click Temporal Relay with a watch to insert it; empty hand opens management. Owner/admin controls ejection, selection, repeat count and cancellation. One selected timeline per Relay, including creative saved timelines. Inserting a watch with an active Echo is rejected.
 - Finite run starts on rising redstone edge and finishes despite signal falling. Constant signal does not repeatedly start finite runs; busy pulses ignored. Infinite run requires sustained redstone; falling edge cancels and drops actual inventory. New rising edge starts a new job. Stop and eject cancel jobs. Normal docked watches accept external FE (no passive recharge while docked), creative ignore FE; power loss stalls docked jobs. Redstone is a control signal, not FE. No chunk loading, same dimension as recording, owner can be offline while chunks remain loaded.
 - Test once, five, infinite, finite pulse and sustained signal, ejection/break, power depletion/recharge, save/reload, creative selection. Relay texture uses vanilla crying obsidian and lamp faces initially. No gameplay verification by CI.
+
+## 0.5.1 ownership, multi-Relay, inventory and cleanup
+- Watch data is per physical item. Duplicate IDs in player inventory are re-keyed; actual existing local recordings are preserved as independent snapshots with new timeline IDs. Newly obtained blank watches remain blank. Online owner losing a non-docked watch dismisses its Echoes. Active timelines cannot be cleared/deleted until dismissal completes; dismissal preserves timeline even if retain is off for safety.
+- Creative Relay supports selecting multiple timeline rows; each selected timeline has independent repeat count. Rising edge arms each selected job; falling edge stops only infinite jobs. Finite jobs finish independently. Eject/stop cancels all. Selection changes while idle only. Existing single-selection Relay migrates.
+- Owner/admin right-click opens a real two-way inventory container with player inventory and Echo inventory. Normal/shift clicks transfer real items, Echo pauses during access, only one viewer. No watches in Echo inventory. Cursor used by internal Input replay is not editable. Closing resumes.
+- /chronofactory dismissall dismisses caller's Echoes in all dimensions; /chronofactory dismissall all requires operator permission and dismisses everyone's. Loaded orphan entities are cleaned; unloaded tracked echoes dismiss when loaded. Pickup inflation increased 50% from previous Echo ranges.
+- Test in disposable world: duplicate watches, independent names, multiple selected timelines with mixed finite/infinite, transfer to/from Echo and closing, active delete rejection, emergency dismissal. CI cannot verify gameplay.
