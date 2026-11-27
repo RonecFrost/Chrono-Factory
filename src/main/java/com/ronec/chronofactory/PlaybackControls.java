@@ -51,6 +51,10 @@ final class PlaybackControls{
     static void seek(ServerLevel l,CompoundTag a,int destination){
         if(destination<0)return;
         CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");
+        int recordedTick=strict?destination:ChronoFactory.timeline(tl).getCompound(destination).getInt("recordTick");
+        // Revisiting an action may fire a new real projectile. Allow it to reuse
+        // its recorded trajectory; already flying projectiles remain physical.
+        CompoundTag used=a.getCompound("flightUsed");ListTag traces=tl.getList("flights",Tag.TAG_COMPOUND);for(int k=0;k<traces.size();k++)if(traces.getCompound(k).getInt("tick")>=recordedTick)used.remove(Integer.toString(k));a.put("flightUsed",used);
         // Return any physical items held in an abandoned native crafting/menu
         // cursor before abandoning that operation. Do not discard or recreate them.
         if(strict){
