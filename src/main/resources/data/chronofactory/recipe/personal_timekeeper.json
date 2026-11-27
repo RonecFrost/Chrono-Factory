@@ -1,0 +1,1 @@
+{"type":"minecraft:crafting_shaped","category":"equipment","pattern":["AOA","OCO","DRD"],"key":{"A":{"item":"minecraft:amethyst_shard"},"O":{"item":"minecraft:crying_obsidian"},"C":{"item":"minecraft:clock"},"D":{"item":"minecraft:diamond"},"R":{"item":"minecraft:redstone"}},"result":{"id":"chronofactory:personal_timekeeper","count":1}}
