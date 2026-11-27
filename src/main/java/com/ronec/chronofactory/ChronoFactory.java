@@ -645,7 +645,7 @@ public final class ChronoFactory {
     }
     static void sweepItems(FakePlayer f,ServerLevel l,Vec3 here){
         f.setPos(here.x,here.y,here.z);
-        for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(.975,.525,.975),it->!it.hasPickUpDelay()&&!watch(it.getItem()))){
+        for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.5,.75,1.5),it->!it.hasPickUpDelay()&&!watch(it.getItem()))){
             ItemStack stack=e.getItem(),part=stack.copy();int before=part.getCount();f.getInventory().add(part);int moved=before-part.getCount();
             if(moved>0){stack.shrink(moved);if(stack.isEmpty())e.discard();else e.setItem(stack.copy());}
         }
@@ -690,7 +690,7 @@ public final class ChronoFactory {
             var id=ResourceLocation.tryParse(prev.getString("block"));if(id!=null&&net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(id).defaultBlockState().is(BlockTags.LOGS))return false;
         }return true;
     }
-    static void collect(FakePlayer f,ServerLevel l,BlockPos pos){for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,new AABB(pos).inflate(1.2))){ItemStack s=e.getItem();if(f.getInventory().add(s)&&s.isEmpty())e.discard();else e.setItem(s);}}
+    static void collect(FakePlayer f,ServerLevel l,BlockPos pos){sweepItems(f,l,f.position());}
     static void describe(ServerPlayer p,EchoEntity entity){EchoInventoryMenu.open(p,entity);}
     static CompoundTag echoData(ServerLevel l,UUID key){for(Tag x:world(l).echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("id").equals(key))return a;}return null;}
     static void inspect(ServerPlayer p,UUID key,boolean open){
@@ -700,7 +700,7 @@ public final class ChronoFactory {
             if(p.position().distanceToSqr(vec(a.getCompound("position")))>64)break;
             CompoundTag tl=a.getCompound("timeline");ListTag actions=timeline(tl);int index=a.getInt("index");
             boolean strict=tl.getBoolean("strict");
-            state.putBoolean("available",true);state.putBoolean("strict",strict);state.putString("name",tl.getString("name"));
+            state.putBoolean("available",true);state.putBoolean("inventoryPaused",EchoInventoryMenu.isOpen(p.serverLevel(),key));state.putBoolean("strict",strict);state.putString("name",tl.getString("name"));
             state.putInt("cycle",a.getInt("cycles")+1);state.putInt("repeats",repeats(tl));state.putInt("tint",tint(tl));
             state.putString("reason",a.getString("reason").isEmpty()?"Running":a.getString("reason"));
             state.putInt("step",strict?a.getInt("rawIndex"):Math.min(index+1,actions.size()));state.putInt("total",strict?tl.getInt("rawTicks"):actions.size());
@@ -730,7 +730,7 @@ public final class ChronoFactory {
         int left=count;
         // Pick only nearby matching physical stacks; preserve their exact durability and properties.
         Vec3 recorded=new Vec3(action.getDouble("ix"),action.getDouble("iy"),action.getDouble("iz"));
-        List<ItemEntity> items=l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.875),e->!e.hasPickUpDelay()&&matches(e.getItem(),wanted));
+        List<ItemEntity> items=l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.5,.75,1.5),e->!e.hasPickUpDelay()&&matches(e.getItem(),wanted));
         items.sort(Comparator.comparingDouble(e->e.position().distanceToSqr(recorded)));
         for(ItemEntity e:items){if(left<=0)break;ItemStack st=e.getItem();int n=Math.min(left,st.getCount());ItemStack portion=st.copyWithCount(n);f.getInventory().add(portion);int moved=n-portion.getCount();if(moved<=0)continue;st.shrink(moved);left-=moved;if(st.isEmpty())e.discard();else e.setItem(st.copy());}
         return count-left;
@@ -764,7 +764,7 @@ public final class ChronoFactory {
                 a.putBoolean("dismiss",true);count++;d.setDirty();
                 if(a.hasUUID("relayId")&&relayIds.add(a.getUUID("relayId"))){BlockPos pos=BlockPos.of(a.getLong("relayPos"));if(l.hasChunkAt(pos)&&l.getBlockEntity(pos) instanceof TemporalRelay.Dock dock&&dock.relayId.equals(a.getUUID("relayId")))dock.cancel(l);}
             }
-            for(Entity entity:l.getAllEntities())if(entity instanceof EchoEntity echo&&(all||p==null||echo.ownerId().equals(p.getUUID()))&&echoData(l,echo.loopId())==null){echo.discard();count++;}
+            List<EchoEntity> orphans=new ArrayList<>();for(Entity entity:l.getAllEntities())if(entity instanceof EchoEntity echo&&(all||p==null||echo.ownerId().equals(p.getUUID()))&&echoData(l,echo.loopId())==null)orphans.add(echo);for(EchoEntity echo:orphans){echo.discard();count++;}
         }
         final int total=count;source.sendSuccess(()->Component.literal("Chrono Factory: dismissed "+total+" Echoes (unloaded Echoes will be removed when loaded)."),false);return count;
     }
@@ -795,7 +795,7 @@ public final class ChronoFactory {
             for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack st=f.getInventory().getItem(i);if(!st.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,st.copy()));}
             f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
-        if(EchoInventoryMenu.isOpen(l,a.getUUID("id"))){a.putString("reason","Inventory open - playback paused");if(echo!=null)echo.visual(tint(a.getCompound("timeline")),24,false,a.getFloat("walkPhase"),echo.visualHeld(),false,position.getFloat("pitch"));f.getInventory().clearContent();if(!a.getBoolean("creative")&&!watch.isEmpty()){energy(watch,energy(watch)-2);if(dock!=null)dock.setChanged();}return false;}
+        if(EchoInventoryMenu.isOpen(l,a.getUUID("id"))){if(echo!=null)echo.visual(tint(a.getCompound("timeline")),24,false,a.getFloat("walkPhase"),echo.visualHeld(),false,position.getFloat("pitch"));f.getInventory().clearContent();if(!a.getBoolean("creative")&&!watch.isEmpty()){energy(watch,energy(watch)-2);if(dock!=null)dock.setChanged();}return false;}
         if((!docked&&owner==null)||watch.isEmpty()){a.putString("reason","Owner or Timekeeper unavailable");f.getInventory().clearContent();return false;}
         CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");ListTag actions=timeline(tl);if(actions.isEmpty()||(strict&&(tl.getIntArray("raw").length<3||tl.getIntArray("motion").length!=tl.getIntArray("raw").length))){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
         int color=tint(tl);
