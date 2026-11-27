@@ -318,7 +318,7 @@ public final class ChronoFactory {
                 if(actions.size()<MAX_ACTIONS)actions.add(a);
             }
         }
-        void move(ServerPlayer p){CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){a.putInt("moveTicks",Math.max(1,tick-lastMoveTick));add(a);last=a;lastMoveTick=tick;}}
+        void move(ServerPlayer p){if(TeleportReplay.recordSample(p,this))lastRawPos=p.position();CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){a.putInt("moveTicks",Math.max(1,tick-lastMoveTick));add(a);last=a;lastMoveTick=tick;}}
     }
     static void cycle(ServerPlayer p){
         distinctWatches(p);ItemStack s=p.getMainHandItem();if(!watch(s))return;
@@ -1025,6 +1025,7 @@ public final class ChronoFactory {
             done=PickReplay.perform(l,f,a,action);working=done;reason=done?"Picked block":"Waiting for recorded block or Creative permission";
         }else if("speech".equals(type)){
             ItemActions.Outcome out=EchoSpeech.perform(l,f,a,tl,action);done=out.done();working=out.working();reason=out.reason();
+            if(done&&!a.contains("commandLanding")&&f.serverLevel()==l&&f.position().distanceToSqr(here)>1e-6)a.put("commandLanding",TeleportReplay.coordinates(f.position()));
             if(done&&a.contains("commandLanding")){Vec3 dest=vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest))){here=dest;f.setPos(here.x,here.y,here.z);position=point(f,"move");a.put("position",position);}}
         }else if("swap_hands".equals(type)){
             if(equip(f,wanted)){ItemStack expectedOff=action.contains("offItem")?ItemStack.parseOptional(l.registryAccess(),action.getCompound("offItem")):ItemStack.EMPTY;

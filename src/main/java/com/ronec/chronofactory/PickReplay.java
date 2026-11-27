@@ -16,13 +16,17 @@ final class PickReplay{
     }
     static boolean perform(ServerLevel l,FakePlayer f,CompoundTag job,CompoundTag a){
         ItemStack wanted=ChronoFactory.template(a,l);if(wanted.isEmpty())return false;
-        if(ChronoFactory.equip(f,wanted))return true;
+        if(job.getCompound("timeline").getBoolean("strict")){
+            int target=Math.max(0,Math.min(8,a.getInt("selected")));for(int k=0;k<36;k++)if(ChronoFactory.matches(f.getInventory().getItem(k),wanted)){ItemStack old=f.getInventory().getItem(target);f.getInventory().setItem(target,f.getInventory().getItem(k));f.getInventory().setItem(k,old);f.getInventory().selected=target;return true;}
+        }else if(ChronoFactory.equip(f,wanted))return true;
         ServerPlayer owner=l.getServer().getPlayerList().getPlayer(job.getUUID("owner"));
         if(!a.getBoolean("creativePick")||!job.getBoolean("creative")||owner==null||!owner.isCreative())return false;
         ItemActions.aim(f,a.getFloat("yaw"),a.getFloat("pitch"));
         BlockHitResult hit=ChronoFactory.aimedBlock(f);if(hit.getType()==HitResult.Type.MISS)return false;
         ItemStack actual=new ItemStack(l.getBlockState(hit.getBlockPos()).getBlock().asItem());if(actual.isEmpty()||!ChronoFactory.matches(actual,wanted))return false;
-        int slot=-1;for(int k=0;k<9;k++)if(f.getInventory().getItem(k).isEmpty()){slot=k;break;}
+        int slot=a.contains("selected")?Math.max(0,Math.min(8,a.getInt("selected"))):-1;
+        if(slot<0)for(int k=0;k<9;k++)if(f.getInventory().getItem(k).isEmpty()){slot=k;break;}
+        if(slot>=0&&!f.getInventory().getItem(slot).isEmpty()){int free=-1;for(int k=9;k<36;k++)if(f.getInventory().getItem(k).isEmpty()){free=k;break;}if(free<0)return false;f.getInventory().setItem(free,f.getInventory().getItem(slot));}
         if(slot<0){slot=f.getInventory().selected;ItemStack prior=f.getInventory().getItem(slot);int free=-1;for(int k=9;k<36;k++)if(f.getInventory().getItem(k).isEmpty()){free=k;break;}if(free<0)return false;f.getInventory().setItem(free,prior);}
         f.getInventory().setItem(slot,actual);f.getInventory().selected=slot;return true;
     }

@@ -21,7 +21,7 @@ final class TeleportReplay{
         String cause=r.teleportKind;r.teleportKind="";
         if(p.position().distanceToSqr(r.lastRawPos)<.000001)return false;
         CompoundTag action=ChronoFactory.point(p,"teleport");action.putString("cause",cause);r.add(action);r.last=ChronoFactory.point(p,"move");r.lastMoveTick=r.tick;
-        if(r.gui.size()<4096){CompoundTag raw=action.copy();raw.putString("kind","teleport");raw.putInt("tick",r.raw.size()/3-1);r.gui.add(raw);}
+        if(r.gui.size()<4096){CompoundTag raw=action.copy();raw.putString("kind","teleport");raw.putInt("tick",r.motion.size()/3);r.gui.add(raw);}
         return true;
     }
     static Vec3 destination(CompoundTag job,CompoundTag action,Vec3 here){

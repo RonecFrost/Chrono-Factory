@@ -51,7 +51,8 @@ final class FlightReplay{
         Guided g=GUIDED.get(p.getUUID());if(g==null)return;
         ListTag points=g.trace.getList("samples",Tag.TAG_COMPOUND);if(g.index>=points.size())return;
         Vec3 target=g.origin.add(ChronoFactory.vec(points.getCompound(g.index))),delta=target.subtract(p.position());
-        if(!Double.isFinite(delta.lengthSqr())||delta.lengthSqr()>256||!l.hasChunkAt(BlockPos.containing(target))){GUIDED.remove(p.getUUID());return;}
+        if(!Double.isFinite(delta.lengthSqr())||delta.lengthSqr()>256||!l.hasChunkAt(BlockPos.containing(target))){if(!(p instanceof ThrownEnderpearl))GUIDED.remove(p.getUUID());else GUIDED.put(p.getUUID(),new Guided(p,g.job,g.cycle,new CompoundTag(),g.origin,0));return;}
+        if(g.index==points.size()-1&&g.trace.contains("impact")&&delta.lengthSqr()>1e-8)delta=delta.add(delta.normalize().scale(.015));
         p.setDeltaMovement(delta);GUIDED.put(p.getUUID(),new Guided(p,g.job,g.cycle,g.trace,g.origin,g.index+1));
     }
     static void afterTick(EntityTickEvent.Post event){
