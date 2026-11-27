@@ -1,4 +1,4 @@
-# Chrono Factory 0.4.0-alpha
+# Chrono Factory 0.4.1-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -33,3 +33,9 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Parallel retains semantic matching; crank/valve holds replay at four-tick intervals over the measured duration. Re-record crank loops. Verify both modes in-game.
 - Strict movement is collision/gravity-aware, approximate vanilla physics; not a perfect client simulation. Entity attacks, offhand swapping, custom GUI packets/buttons, and exact item-use progression are not implemented. Recorded ordinary container clicks are replayed server-side. Menu state across unload/restart needs further testing. Input capture limited to 12,000 ticks (~10 minutes at 20 TPS).
 - Releases include version, build number and UTC build date. Use disposable test worlds.
+
+## 0.4.1 transport reliability
+- Input (formerly Strict): record actual per-tick movement deltas, replay with vanilla collision resolution, no acceleration or catch-up. A wall consumes recorded movement time; later movement is relative to current position. New recordings required for Input. Actual block-use events and container click/close packets recorded in one ordered stream, including exact menu slot and selected hotbar slot. Clicks act on current actual contents. Shift-click follows real menu routing. No exact custom GUI button packet replay.
+- Adaptive (formerly Parallel): withdrawals search matching source slots; deposits start at recorded destination slot then advance and wrap. Empty-inventory bulk deposits first reserve recorded destinations for matching items, then spill over; extra collected items use remaining space. Capture transfer deltas after individual GUI clicks. New recordings recommended for accurate layout. Existing Adaptive recordings still load.
+- Right-click Echo for live, read-only inventory inspection and task, status, cycle, progress, armor/offhand and cursor. Updates twice per second within 8 blocks; no transfer access yet.
+- Test single vanilla chest source and destination first, manual click transfer into bottom-right slot and repeat with full slot, then multiple wood types. Input: change source item and verify exact destination, remove source item and verify clock continues; block the path and verify no overshoot. Back up worlds.

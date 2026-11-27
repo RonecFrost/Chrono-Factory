@@ -52,15 +52,39 @@ public final class StrictReplay {
     }
     static void forget(MacroPlayer f,CompoundTag a){finishCycle(f,a);PLAYERS.remove(f.getUUID());}
     static void clickGui(MacroPlayer f,CompoundTag event){
-        if(event.getBoolean("close")){f.closeContainer();return;}
+        if(event.getBoolean("close")||"close".equals(event.getString("kind"))){f.closeContainer();return;}
         AbstractContainerMenu menu=f.containerMenu;
         if(event.getBoolean("inventory")){if(menu!=f.inventoryMenu)return;}
         else if(menu==f.inventoryMenu||!menu.stillValid(f))return;
+        if(event.contains("slots")&&event.getInt("slots")!=menu.slots.size())return;
         int slot=event.getInt("slot"),button=event.getInt("button"),click=event.getInt("click");
         if(click<0||click>=ClickType.values().length||slot< -999||slot>=menu.slots.size()||(slot<0&&slot!=-999))return;
         // Never replay the recorded item stack. The real slot and actual cursor
         // contents determine the result, including empty or different stacks.
         menu.clicked(slot,button,ClickType.values()[click],f);
+    }
+    static boolean recordedUse(ServerLevel l,MacroPlayer f,CompoundTag event){
+        if(f.containerMenu!=f.inventoryMenu)return false;
+        f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));
+        f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));f.setShiftKeyDown(event.getBoolean("sneak"));
+        BlockHitResult hit=ChronoFactory.aimedBlock(f);
+        // A tiny difference in frame timing can miss a chest edge. Only recover
+        // the recorded hit when the Echo is still at the demonstrated position
+        // and the real line of sight reaches that block; never reach through walls.
+        BlockPos pos=BlockPos.of(event.getLong("pos"));
+        if(hit.getType()==HitResult.Type.MISS&&f.position().distanceToSqr(ChronoFactory.vec(event))<.36&&l.hasChunkAt(pos)){
+            Vec3 target=new Vec3(event.getDouble("hx"),event.getDouble("hy"),event.getDouble("hz"));
+            Vec3 eye=f.getEyePosition();Vec3 ray=target.subtract(eye);
+            if(ray.lengthSqr()<=25){
+                BlockHitResult check=l.clip(new net.minecraft.world.level.ClipContext(eye,target.add(ray.normalize().scale(.035)),net.minecraft.world.level.ClipContext.Block.OUTLINE,net.minecraft.world.level.ClipContext.Fluid.NONE,f));
+                if(check.getType()!=HitResult.Type.MISS&&check.getBlockPos().equals(pos))hit=check;
+            }
+        }
+        if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos())){
+            InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,hit);return result.consumesAction();
+        }
+        if(!f.getMainHandItem().isEmpty())return f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND).consumesAction();
+        return false;
     }
     static void step(ServerLevel l,CompoundTag a,CompoundTag tl,MacroPlayer f,EchoEntity echo,ItemStack watch){
         int[] frames=tl.getIntArray("raw");int tick=a.getInt("rawIndex"),i=tick*3;
@@ -71,37 +95,44 @@ public final class StrictReplay {
         f.getInventory().selected=Math.min(8,slot);f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);f.setSprinting((flags&SPRINT)!=0);
         if(f.containerMenu!=f.inventoryMenu&&!f.containerMenu.stillValid(f))f.closeContainer();
         Vec3 here=echo.position();f.setPos(here.x,here.y,here.z);
-        boolean ground=l.getBlockCollisions(f,f.getBoundingBox().move(0,-.06,0)).iterator().hasNext();f.setOnGround(ground);
-        double vx=a.getDouble("strictVx"),vy=a.getDouble("strictVy"),vz=a.getDouble("strictVz");
-        if(ground&&vy<0)vy=0;
-        if(ground&&(flags&JUMP)!=0)vy=.42;
-        double forward=((flags&FORWARD)!=0?1:0)-((flags&BACK)!=0?1:0);
-        double strafe=((flags&LEFT)!=0?1:0)-((flags&RIGHT)!=0?1:0);
-        Vec3 input=new Vec3(strafe,0,forward);if(input.lengthSqr()>1)input=input.normalize();
-        double acceleration=ground?((flags&SNEAK)!=0?.031:(flags&SPRINT)!=0?.13:.10):.026;
-        input=input.scale(acceleration).yRot(-yaw*Mth.DEG_TO_RAD);
-        vx+=input.x;vz+=input.z;
-        Vec3 desired=new Vec3(vx,vy,vz);if(l.hasChunkAt(BlockPos.containing(here.add(desired))))f.move(MoverType.SELF,desired);
+        // The same sampled path used for the adaptive engine, but replayed as
+        // per-tick relative node deltas. No acceleration, no catch-up, no target
+        // coordinate snapping. A blocked tick consumes its time normally.
+        int[] motion=tl.getIntArray("motion");
+        Vec3 desired=new Vec3(Float.intBitsToFloat(motion[i]),Float.intBitsToFloat(motion[i+1]),Float.intBitsToFloat(motion[i+2]));
+        if(!Double.isFinite(desired.lengthSqr())||desired.lengthSqr()>4)desired=Vec3.ZERO;
+        f.noPhysics=false;f.setDeltaMovement(Vec3.ZERO);
+        f.setOnGround(l.getBlockCollisions(f,f.getBoundingBox().move(0,-.06,0)).iterator().hasNext());
+        // Resolve collisions with the vanilla collision solver. The next sample
+        // is always relative to the actual resulting position.
+        if(l.hasChunkAt(BlockPos.containing(here.add(desired))))f.move(MoverType.SELF,desired);
         Vec3 actual=f.position().subtract(here);
-        if(Math.abs(actual.x-vx)>1e-5)vx=0;if(Math.abs(actual.z-vz)>1e-5)vz=0;if(Math.abs(actual.y-vy)>1e-5)vy=0;
-        double drag=f.onGround()?.546:.91;
-        a.putDouble("strictVx",vx*drag);a.putDouble("strictVz",vz*drag);a.putDouble("strictVy",(vy-.08)*.98);
-        boolean swung=false;
-        // Normal vanilla-like use repeat interval; failures never stop the macro.
+        boolean swung=false,hadRecordedUse=false;String task="Idle";
+        // Record actual server interaction events and GUI clicks in one ordered
+        // stream. This avoids relying on a held-key frame to open a chest.
+        ListTag gui=tl.getList("gui",Tag.TAG_COMPOUND);int cursor=a.getInt("guiIndex");
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
-        if((flags&USE)!=0&&f.containerMenu==f.inventoryMenu&&delay==0){
-            BlockHitResult hit=ChronoFactory.aimedBlock(f);
-            InteractionResult result=InteractionResult.PASS;
-            if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos()))
-                result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,hit);
-            if(!result.consumesAction()&&!f.getMainHandItem().isEmpty()&&f.containerMenu==f.inventoryMenu)
-                result=f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND);
-            delay=4;swung=true;
+        while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
+            CompoundTag event=gui.getCompound(cursor++);
+            if("use".equals(event.getString("kind"))){recordedUse(l,f,event);hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
+            else{clickGui(f,event);task=event.getBoolean("close")?"Close inventory":"Click slot "+event.getInt("slot");}
         }
-        if((flags&USE)==0){delay=0;if(f.isUsingItem())f.releaseUsingItem();}
+        a.putInt("guiIndex",cursor);
+        // Continue held input even when recorded events were absent, but do
+        // not double-fire an actual captured click.
+        if(!hadRecordedUse&&(flags&USE)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu&&delay==0){
+            f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);
+            BlockHitResult hit=ChronoFactory.aimedBlock(f);InteractionResult result=InteractionResult.PASS;
+            if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos()))result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,hit);
+            if(!result.consumesAction()&&!f.getMainHandItem().isEmpty()&&f.containerMenu==f.inventoryMenu)f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND);
+            delay=4;swung=true;task="Holding right-click";
+        }
+        if((flags&USE)==0&&!hadRecordedUse){delay=0;if(f.isUsingItem())f.releaseUsingItem();}
         a.putInt("strictUseDelay",delay);
+        f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);
         int attackDelay=Math.max(0,a.getInt("strictAttackDelay")-1);
-        if((flags&ATTACK)!=0&&f.containerMenu==f.inventoryMenu){
+        if((flags&ATTACK)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu){
+            task="Holding left-click";
             BlockHitResult hit=ChronoFactory.aimedBlock(f);swung=true;
             if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos())&&attackDelay==0){
                 BlockPos pos=hit.getBlockPos();BlockState state=l.getBlockState(pos);
@@ -112,12 +143,13 @@ public final class StrictReplay {
         }else{a.remove("strictMinePos");a.remove("strictMineProgress");}
         a.putInt("strictAttackDelay",attackDelay);
         if((flags&DROP)!=0&&(previous&DROP)==0&&!f.getMainHandItem().isEmpty())f.drop(f.getMainHandItem().split(1),false);
-        ListTag gui=tl.getList("gui",Tag.TAG_COMPOUND);int cursor=a.getInt("guiIndex");
-        while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){clickGui(f,gui.getCompound(cursor++));}
-        a.putInt("guiIndex",cursor);
+        
         ChronoFactory.sweepItems(f,l,f.position());
         Vec3 now=f.position();CompoundTag position=ChronoFactory.point(f,"move");a.put("position",position);
         boolean moving=actual.horizontalDistanceSqr()>.00001;
+        if("Idle".equals(task)&&desired.lengthSqr()>.00001)task=moving?"Following recorded movement":"Movement obstructed; continuing clock";
+        if("Idle".equals(task)&&f.containerMenu!=f.inventoryMenu)task="Inventory open";
+        a.putString("strictTask",task);
         if(moving)a.putFloat("walkPhase",a.getFloat("walkPhase")+(float)actual.horizontalDistance()*5);
         echo.setPos(now.x,now.y,now.z);echo.setYRot(yaw);echo.setXRot(pitch);echo.setShiftKeyDown((flags&SNEAK)!=0);
         echo.visual(ChronoFactory.tint(tl),24,moving,a.getFloat("walkPhase"),f.getMainHandItem(),swung,pitch);

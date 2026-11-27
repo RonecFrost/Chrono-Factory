@@ -17,6 +17,10 @@ public abstract class ContainerInputMixin {
         if(player.server.isSameThread()&&packet.getContainerId()==player.containerMenu.containerId)
             ChronoFactory.rawGui(player,packet.getSlotNum(),packet.getButtonNum(),packet.getClickType().ordinal(),false);
     }
+    @Inject(method="handleContainerClick",at=@At("RETURN"))
+    private void chronoAfterClick(ServerboundContainerClickPacket packet,CallbackInfo ci){
+        if(player.server.isSameThread()&&packet.getContainerId()==player.containerMenu.containerId)ChronoFactory.afterGui(player);
+    }
     @Inject(method="handleContainerClose",at=@At("HEAD"))
     private void chronoClose(ServerboundContainerClosePacket packet,CallbackInfo ci){
         if(player.server.isSameThread())ChronoFactory.rawGui(player,0,0,0,true);

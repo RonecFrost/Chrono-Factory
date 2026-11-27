@@ -117,6 +117,14 @@ public final class ChronoFactory {
         };
         public Type<UiCommand> type(){return TYPE;}
     }
+    public record InspectState(UUID key,CompoundTag state,boolean open) implements CustomPacketPayload {
+        public static final Type<InspectState> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"inspect_state"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,InspectState> CODEC=new StreamCodec<>(){
+            public InspectState decode(RegistryFriendlyByteBuf b){UUID key=b.readUUID();CompoundTag tag=b.readNbt();return new InspectState(key,tag==null?new CompoundTag():tag,b.readBoolean());}
+            public void encode(RegistryFriendlyByteBuf b,InspectState p){b.writeUUID(p.key());b.writeNbt(p.state());b.writeBoolean(p.open());}
+        };
+        public Type<InspectState> type(){return TYPE;}
+    }
     public record UiState(UUID key,CompoundTag state) implements CustomPacketPayload {
         public static final Type<UiState> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"ui_state"));
         public static final StreamCodec<RegistryFriendlyByteBuf,UiState> CODEC=new StreamCodec<>() {
@@ -126,7 +134,8 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("6");
+        var registrar=e.registrar("7");
+        registrar.playToClient(InspectState.TYPE,InspectState.CODEC,(msg,ctx)->ctx.enqueueWork(()->ClientControls.inspect(msg)));
         registrar.playToServer(InputFrame.TYPE,InputFrame.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)rawInput(p,msg);}));
         registrar.playToServer(HeldInput.TYPE,HeldInput.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)inputEdge(p,msg);}));
         registrar.playToServer(AirSwing.TYPE,AirSwing.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)recordAirSwing(p);}));
@@ -194,11 +203,12 @@ public final class ChronoFactory {
         int useEpoch,attackTargetStart;
         BlockPos attackTarget;
         CompoundTag heldUse;
-        final List<Integer> raw=new ArrayList<>();
+        final List<Integer> raw=new ArrayList<>(),motion=new ArrayList<>();
+        Vec3 lastRawPos;
         final ListTag gui=new ListTag();
         int rawFlags,rawSlot,rawLast=-100;
         float rawYaw,rawPitch;
-        Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);rawSlot=p.getInventory().selected;rawYaw=p.getYRot();rawPitch=p.getXRot();}
+        Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);rawSlot=p.getInventory().selected;rawYaw=p.getYRot();rawPitch=p.getXRot();lastRawPos=p.position();}
         void closeUse(int end){
             if(heldUse==null)return;
             int start=heldUse.getInt("recordTick");int[] offsets=heldUse.getIntArray("useOffsets");
@@ -268,7 +278,7 @@ public final class ChronoFactory {
         ItemStack s=find(p,r.watch);
         if(save&&!s.isEmpty()){
             if(r.actions.size()==1){CompoundTag idle=point(p,"wait");idle.putInt("ticks",Math.max(1,Math.min(1200,r.tick)));r.add(idle);}
-            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
+            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.putIntArray("motion",r.motion.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
         }
         restore(p);say(p,save&&!s.isEmpty()?"RECORDING SAVED ("+r.actions.size()+" steps). Left-click to summon the Echo.":"Recording cancelled; inventory restored.");
     }
@@ -315,7 +325,13 @@ public final class ChronoFactory {
     public static void rawGui(ServerPlayer p,int slot,int button,int click,boolean close){
         if(p instanceof FakePlayer)return;Recording r=RECORDINGS.get(p.getUUID());
         if(r==null||r.gui.size()>=4096)return;
-        CompoundTag event=new CompoundTag();event.putInt("tick",r.raw.size()/3);event.putInt("slot",slot);event.putInt("button",button);event.putInt("click",click);event.putBoolean("close",close);event.putBoolean("inventory",p.containerMenu==p.inventoryMenu);r.gui.add(event);
+        CompoundTag event=new CompoundTag();event.putString("kind",close?"close":"click");event.putInt("tick",r.raw.size()/3);event.putInt("slot",slot);event.putInt("button",button);event.putInt("click",click);event.putBoolean("close",close);event.putBoolean("inventory",p.containerMenu==p.inventoryMenu);event.putInt("slots",p.containerMenu.slots.size());r.gui.add(event);
+    }
+    public static void afterGui(ServerPlayer p){
+        if(p instanceof FakePlayer)return;
+        Recording r=RECORDINGS.get(p.getUUID());
+        if(r==null||r.container==null)return;
+        if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;captureTransfers(p,r);}
     }
     static void inputEdge(ServerPlayer p,HeldInput edge){
         Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
@@ -416,6 +432,7 @@ public final class ChronoFactory {
         r.move(p);BlockPos pos=e.getPos();
         CompoundTag a=point(p,"use");a.putInt("recordTick",r.tick);a.putInt("holdId",r.useDown?r.useEpoch:0);a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
         BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));
+        if(r.gui.size()<4096){CompoundTag input=a.copy();input.putString("kind","use");input.putInt("tick",r.raw.size()/3);input.putInt("selected",p.getInventory().selected);r.gui.add(input);}
         IItemHandler inventory=handler(p.serverLevel(),pos);
         if(inventory!=null&&!p.isShiftKeyDown()){
             // A chest can be opened while holding an item. Wait until we know whether
@@ -439,7 +456,9 @@ public final class ChronoFactory {
             if(!r.dimension.equals(p.level().dimension().location().toString())||find(p,r.watch).isEmpty()){finish(p,false);return;}
             int flags=r.tick-r.rawLast<=10?r.rawFlags:0;
             // Record the key state at every server tick, not only successful world actions.
-            r.raw.add(flags|(r.rawSlot<<12));r.raw.add(Float.floatToIntBits(r.rawYaw));r.raw.add(Float.floatToIntBits(r.rawPitch));
+            r.raw.add(flags|(p.getInventory().selected<<12));r.raw.add(Float.floatToIntBits(p.getYRot()));r.raw.add(Float.floatToIntBits(p.getXRot()));
+            Vec3 delta=p.position().subtract(r.lastRawPos);r.lastRawPos=p.position();
+            r.motion.add(Float.floatToIntBits((float)delta.x));r.motion.add(Float.floatToIntBits((float)delta.y));r.motion.add(Float.floatToIntBits((float)delta.z));
             if(r.container!=null){
                 if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;captureTransfers(p,r);}
                 else if(r.menuSeen){captureTransfers(p,r);r.container=null;r.menuSeen=false;r.bulkStart=-1;}
@@ -462,7 +481,7 @@ public final class ChronoFactory {
     }
     static void manifest(ServerPlayer p,ItemStack s,CompoundTag tl){
         ListTag actions=timeline(tl);if(actions.isEmpty()){say(p,"No recording available. Left-click to start recording.");return;}
-        if(tl.getBoolean("strict")&&tl.getIntArray("raw").length<3){say(p,"Strict mode requires a new input recording from version 0.4.0 or later.");return;}
+        if(tl.getBoolean("strict")&&(tl.getIntArray("raw").length<3||tl.getIntArray("motion").length!=tl.getIntArray("raw").length)){say(p,"Input mode requires a new recording from version 0.4.1 or later for corrected movement.");return;}
         ServerLevel l=null;for(ServerLevel candidate:p.server.getAllLevels())if(candidate.dimension().location().toString().equals(tl.getString("dimension")))l=candidate;
         if(l==null||!l.hasChunkAt(BlockPos.containing(vec(actions.getCompound(0))))){say(p,"Recording start is not loaded.");return;}
         UUID key=id(s);if(active(p,key,tl.getUUID("id"))||(!creative(s)&&active(p,key,null)))return;
@@ -492,8 +511,43 @@ public final class ChronoFactory {
         }
         int available=0;for(int i=0;i<36;i++)if(matches(inv.getItem(i),wanted))available+=inv.getItem(i).getCount();if(available<n)return 0;
         // Insert only actual stacks, preserving durability and components. Partial transfers track remaining count.
-        for(int i=0;i<36&&n>0;i++){ItemStack s=inv.getItem(i);if(!matches(s,wanted))continue;int want=Math.min(n,s.getCount());ItemStack pending=s.copyWithCount(want);for(int j=first;j<last&&!pending.isEmpty();j++)pending=h.insertItem(j,pending,false);int moved=want-pending.getCount();s.shrink(moved);n-=moved;}
+        for(int i=0;i<36&&n>0;i++){ItemStack s=inv.getItem(i);if(!matches(s,wanted))continue;int want=Math.min(n,s.getCount());ItemStack pending=s.copyWithCount(want);pending=insertPreferred(h,pending,exactSlot);int moved=want-pending.getCount();s.shrink(moved);n-=moved;}
         return initial-n;
+    }
+    static ItemStack insertPreferred(IItemHandler h,ItemStack stack,int preferred){
+        if(h==null||stack.isEmpty())return stack;
+        int count=h.getSlots();if(count==0)return stack;
+        int start=preferred>=0&&preferred<count?preferred:0;
+        for(int j=0;j<count&&!stack.isEmpty();j++)stack=h.insertItem((start+j)%count,stack,false);
+        return stack;
+    }
+    static int insertFromInventory(FakePlayer f,IItemHandler h,ItemStack wanted,int limit,int preferred,boolean onlyPreferred){
+        int left=limit;
+        for(int i=0;i<36&&left>0;i++){
+            ItemStack stack=f.getInventory().getItem(i);if(!matches(stack,wanted))continue;
+            int n=Math.min(left,stack.getCount());ItemStack part=stack.copyWithCount(n);
+            ItemStack remainder=onlyPreferred?(preferred>=0&&preferred<h.getSlots()?h.insertItem(preferred,part,false):part):insertPreferred(h,part,preferred);
+            int moved=n-remainder.getCount();stack.shrink(moved);left-=moved;
+        }return limit-left;
+    }
+    static int depositOrganized(FakePlayer f,IItemHandler h,ListTag actions,int index,ServerLevel l){
+        List<CompoundTag> rules=new ArrayList<>();long pos=actions.getCompound(index).getLong("pos");
+        for(int j=index;j<actions.size();j++){CompoundTag rule=actions.getCompound(j);
+            if(j>index&&(!rule.getBoolean("bulkSkip")||rule.getLong("pos")!=pos))break;
+            rules.add(rule);
+        }
+        // Reserve the demonstrated layout first. Never let overflow consume
+        // another known item's preferred slot before that item has had a chance.
+        for(CompoundTag rule:rules){ItemStack wanted=template(rule,l);int preferred=rule.contains("slot")?rule.getInt("slot"):-1;
+            if(preferred>=0&&preferred<h.getSlots())insertFromInventory(f,h,wanted,rule.getInt("count"),preferred,true);
+        }
+        // Extra harvested items of a known type start at that type's last
+        // demonstrated destination and spill forward, then wrap.
+        Set<String> seen=new HashSet<>();
+        for(int j=rules.size()-1;j>=0;j--){CompoundTag rule=rules.get(j);ItemStack wanted=template(rule,l);if(wanted.isEmpty()||!seen.add(itemKey(wanted)))continue;
+            insertFromInventory(f,h,wanted,carried(f,wanted),rule.contains("slot")?rule.getInt("slot"):-1,false);
+        }
+        return depositAll(f,h);
     }
     static int carried(FakePlayer f,ItemStack wanted){
         int count=0;for(int i=0;i<36;i++){ItemStack st=f.getInventory().getItem(i);if(matches(st,wanted))count+=st.getCount();}return count;
@@ -552,22 +606,27 @@ public final class ChronoFactory {
         }return true;
     }
     static void collect(FakePlayer f,ServerLevel l,BlockPos pos){for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,new AABB(pos).inflate(1.2))){ItemStack s=e.getItem();if(f.getInventory().add(s)&&s.isEmpty())e.discard();else e.setItem(s);}}
-    static void describe(ServerPlayer p,EchoEntity entity){
+    static void describe(ServerPlayer p,EchoEntity entity){inspect(p,entity.loopId(),true);}
+    static void inspect(ServerPlayer p,UUID key,boolean open){
+        CompoundTag state=new CompoundTag();state.putBoolean("available",false);
         WorldData d=world(p.serverLevel());
-        for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;
-            if(!a.getUUID("id").equals(entity.loopId()))continue;
-            ListTag actions=timeline(a.getCompound("timeline"));int i=a.getInt("index");
-            String action=i>=0&&i<actions.size()?actions.getCompound(i).getString("type"):"transition";
-            if(a.getCompound("timeline").getBoolean("strict"))action="raw input "+a.getInt("rawIndex")+"/"+a.getCompound("timeline").getInt("rawTicks")+" ticks";
-            else if(i>=0&&i<actions.size()&&actions.getCompound(i).contains("duration"))action+=" "+String.format(java.util.Locale.ROOT,"%.1f/%.1fs",a.getInt("heldElapsed")/20.0,actions.getCompound(i).getInt("duration")/20.0);
-            if(i>=0&&i<actions.size()&&actions.getCompound(i).getBoolean("bulkStart")&&!a.getCompound("timeline").getBoolean("strict"))action="deposit all";
-            p.sendSystemMessage(Component.literal("[Chrono] "+a.getCompound("timeline").getString("name")+" | "+(a.getCompound("timeline").getBoolean("strict")?"Strict":"Parallel")+" | Cycle "+(a.getInt("cycles")+1)+" | Step "+Math.min(i+1,actions.size())+"/"+actions.size()+" ("+action+")"));
-            p.sendSystemMessage(Component.literal("Status: "+(a.getString("reason").isEmpty()?"Running":a.getString("reason"))));
-            ListTag inv=a.getList("inventory",Tag.TAG_COMPOUND);StringJoiner items=new StringJoiner(", ");
-            for(Tag it:inv){ItemStack st=ItemStack.parseOptional(p.registryAccess(),(CompoundTag)it);if(!st.isEmpty())items.add(st.getCount()+" x "+st.getHoverName().getString());}
-            p.sendSystemMessage(Component.literal("Carrying: "+(items.length()==0?"Nothing":items.toString())));return;
+        for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;if(!a.getUUID("id").equals(key))continue;
+            if(p.position().distanceToSqr(vec(a.getCompound("position")))>64)break;
+            CompoundTag tl=a.getCompound("timeline");ListTag actions=timeline(tl);int index=a.getInt("index");
+            boolean strict=tl.getBoolean("strict");
+            state.putBoolean("available",true);state.putBoolean("strict",strict);state.putString("name",tl.getString("name"));
+            state.putInt("cycle",a.getInt("cycles")+1);state.putInt("tint",tint(tl));
+            state.putString("reason",a.getString("reason").isEmpty()?"Running":a.getString("reason"));
+            state.putInt("step",strict?a.getInt("rawIndex"):Math.min(index+1,actions.size()));state.putInt("total",strict?tl.getInt("rawTicks"):actions.size());
+            String task=index<actions.size()?actions.getCompound(index).getString("type"):"Remanifesting";
+            if(strict)task=a.getString("strictTask");
+            else if(index<actions.size()&&actions.getCompound(index).getBoolean("bulkStart"))task="Organized deposit";
+            state.putString("task",task.isEmpty()?"Waiting":task);
+            state.put("inventory",a.getList("inventory",Tag.TAG_COMPOUND).copy());
+            if(a.contains("strictCursor"))state.put("cursor",a.getCompound("strictCursor").copy());
+            break;
         }
-        p.sendSystemMessage(Component.literal("[Chrono] This Echo is no longer linked to an active timeline."));
+        PacketDistributor.sendToPlayer(p,new InspectState(key,state,open));
     }
     static String itemName(ItemStack s){return s.isEmpty()?"empty hand":s.getHoverName().getString();}
     static String coords(BlockPos p){return p.getX()+", "+p.getY()+", "+p.getZ();}
@@ -621,7 +680,7 @@ public final class ChronoFactory {
             f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
         if(owner==null||watch.isEmpty()){a.putString("reason","Owner or Timekeeper unavailable");f.getInventory().clearContent();return false;}
-        CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");ListTag actions=timeline(tl);if(actions.isEmpty()||(strict&&tl.getIntArray("raw").length<3)){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
+        CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");ListTag actions=timeline(tl);if(actions.isEmpty()||(strict&&(tl.getIntArray("raw").length<3||tl.getIntArray("motion").length!=tl.getIntArray("raw").length))){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
         int color=tint(tl);
         // At the end of a timeline, fade out and reappear at the initial position.
         // Logical inventory belongs to the loop and is never regenerated by visual remanifestation.
@@ -730,15 +789,16 @@ public final class ChronoFactory {
                 else if(!strict&&action.getBoolean("bulkSkip")){done=true;reason="Already deposited inventory";}
                 else if(!strict&&action.getBoolean("bulkStart")){
                     int before=0;for(int slot=0;slot<36;slot++)before+=f.getInventory().getItem(slot).getCount();
-                    int left=depositAll(f,h);done=left==0;working=left<before;reason="Destination full or rejects "+left+" carried items at "+coords(pos);
+                    int left=depositOrganized(f,h,actions,index,l);done=left==0;working=left<before;reason="Destination full or rejects "+left+" carried items at "+coords(pos);
                 }else{
                     boolean take=action.getBoolean("take");int expected=action.getInt("count");
-                    int slot=strict&&action.contains("slot")?action.getInt("slot"):-1;
+                    int slot=!take&&action.contains("slot")?action.getInt("slot"):-1;
+                    if(slot>=h.getSlots())slot=-1;
                     int n=expected-a.getInt("transferred");
                     if(!strict&&!take)n=Math.min(n,carried(f,wanted));
                     int moved=transfer(f,h,wanted,n,take,slot);a.putInt("transferred",a.getInt("transferred")+moved);
                     done=a.getInt("transferred")>=expected||(!strict&&!take&&carried(f,wanted)==0);working=moved>0;
-                    String where=coords(pos)+(slot>=0?" slot "+(slot+1):"");
+                    String where=coords(pos)+(slot>=0?" preferred slot "+(slot+1):"");
                     reason=take?"Waiting to withdraw "+(expected-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+where:"Waiting to deposit "+itemName(wanted)+" at "+where+" (missing items or destination full)";
                 }
             }else if("use".equals(type)){
@@ -828,6 +888,7 @@ public final class ChronoFactory {
         PacketDistributor.sendToPlayer(p,new UiState(key,summary));
     }
     static void uiCommand(ServerPlayer p,UiCommand cmd){
+        if("inspect".equals(cmd.action())){inspect(p,cmd.key(),false);return;}
         if("open".equals(cmd.action())){ItemStack held=p.getMainHandItem();if(watch(held))sendUi(p,held);return;}
         ItemStack s=find(p,cmd.key());if(s.isEmpty())return;
         CompoundTag t=data(s);Recording r=RECORDINGS.get(p.getUUID());

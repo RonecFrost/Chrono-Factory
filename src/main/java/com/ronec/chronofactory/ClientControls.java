@@ -44,6 +44,11 @@ public final class ClientControls{
             if(!useHeld){useHeld=true;PacketDistributor.sendToServer(new ChronoFactory.UiCommand(new UUID(0,0),"open",0));}
         }
     }
+    public static void inspect(ChronoFactory.InspectState msg){
+        Minecraft mc=Minecraft.getInstance();
+        if(mc.screen instanceof EchoInspectScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
+        else if(msg.open())mc.setScreen(new EchoInspectScreen(msg.key(),msg.state()));
+    }
     public static void show(ChronoFactory.UiState msg){
         Minecraft mc=Minecraft.getInstance();
         if(mc.screen instanceof TimekeeperScreen screen&&screen.key.equals(msg.key()))screen.update(msg.state());
