@@ -1,0 +1,1 @@
+{"type":"minecraft:crafting_shaped","category":"redstone","pattern":["ARA","OCO","ORO"],"key":{"A":{"item":"minecraft:amethyst_shard"},"R":{"item":"minecraft:redstone"},"O":{"item":"minecraft:crying_obsidian"},"C":{"item":"minecraft:comparator"}},"result":{"id":"chronofactory:temporal_relay","count":1}}

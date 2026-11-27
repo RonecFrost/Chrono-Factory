@@ -1,4 +1,4 @@
-# Chrono Factory 0.4.2-alpha
+# Chrono Factory 0.5.0-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -44,3 +44,9 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Adaptive records the net quantity moved during a chest visit, not transient cursor pickups. A source stack of 5 reduced to 4 records 1. Matching quantity may be spread across source slots. Wait only if fewer than the outstanding required quantity are extractable or inventory space is inadequate. Destination preferences retained. Same-item rearrangements within one chest with zero net movement are not Adaptive transport; use Input for those. Re-record affected old timelines.
 - Click the current timeline name or a saved timeline's name to rename it (48 chars). Renaming active timelines updates their world state without restarting. Inspector displays recorded transfer quantity and availability.
 - Regression checks cover net transfer allocation, not actual Minecraft GUI or third-party shift-scroll behavior. Test vanilla split and Mouse Tweaks shift-scroll in a disposable world, with source counts 5,4,3,2,1,0 and replenishment.
+
+## 0.5.0 finite repeats and Temporal Relay
+- Repeat settings: infinite by default (including existing timelines) or 1–9999 completed cycles, per current/saved timeline. Change while inactive. Final loop dissolves and drops remaining real inventory, recording stays intact. No need to re-record for repeat settings.
+- Right-click Temporal Relay with a watch to insert it; empty hand opens management. Owner/admin controls ejection, selection, repeat count and cancellation. One selected timeline per Relay, including creative saved timelines. Inserting a watch with an active Echo is rejected.
+- Finite run starts on rising redstone edge and finishes despite signal falling. Constant signal does not repeatedly start finite runs; busy pulses ignored. Infinite run requires sustained redstone; falling edge cancels and drops actual inventory. New rising edge starts a new job. Stop and eject cancel jobs. Normal docked watches accept external FE (no passive recharge while docked), creative ignore FE; power loss stalls docked jobs. Redstone is a control signal, not FE. No chunk loading, same dimension as recording, owner can be offline while chunks remain loaded.
+- Test once, five, infinite, finite pulse and sustained signal, ejection/break, power depletion/recharge, save/reload, creative selection. Relay texture uses vanilla crying obsidian and lamp faces initially. No gameplay verification by CI.

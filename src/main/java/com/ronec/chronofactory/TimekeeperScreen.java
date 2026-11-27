@@ -29,6 +29,8 @@ public final class TimekeeperScreen extends Screen {
         b.active=enabled;return addRenderableWidget(b);
     }
     private void rename(UUID id,String name){minecraft.setScreen(new TimelineNameScreen(this,key,id,name));}
+    private String repeatLabel(int n){return n==0?"Infinite":n+"x";}
+    private void repeat(UUID id,int count){minecraft.setScreen(new RepeatScreen(this,count,n->PacketDistributor.sendToServer(new ChronoFactory.RepeatSetting(key,id,n))));}
     @Override protected void init(){
         popupIndex=CLOSED;
         w=Math.min(344,width-12);h=Math.min(creative()?302:204,height-8);
@@ -46,7 +48,8 @@ public final class TimekeeperScreen extends Screen {
         button(10,103,half,"Retain: "+(state.getBoolean("retain")?"ON":"OFF"),()->send("retain",0),unlocked);
         button(20+half,103,half,"Tint: "+ChronoFactory.TINT_NAMES[state.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(-1,20+half,103,half,state.getInt("tint")),unlocked);
         button(w-137,17,127,state.getBoolean("strict")?"Mode: Input":"Mode: Adaptive",()->send("mode",-1),unlocked&&!running());
-        if(hasCurrent()&&state.hasUUID("currentId"))button(10,128,w-20,"Rename: "+font.plainSubstrByWidth(state.getString("currentName"),w-76),()->rename(state.getUUID("currentId"),state.getString("currentName")),unlocked);
+        if(hasCurrent()&&state.hasUUID("currentId"))button(10,128,half,"Rename: "+font.plainSubstrByWidth(state.getString("currentName"),half-52),()->rename(state.getUUID("currentId"),state.getString("currentName")),unlocked);
+        button(hasCurrent()?20+half:10,128,hasCurrent()?half:w-20,"Repeat: "+repeatLabel(state.getInt("repeats")),()->repeat(state.hasUUID("currentId")?state.getUUID("currentId"):new UUID(0,0),state.getInt("repeats")),unlocked&&!running());
         if(creative()){
             button(10,153,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
             button(20+half,153,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
@@ -55,7 +58,8 @@ public final class TimekeeperScreen extends Screen {
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
                 int y=179+row*22;CompoundTag entry=saved().getCompound(i);
-                if(entry.hasUUID("id"))button(10,y,Math.max(24,w-225),font.plainSubstrByWidth(entry.getString("name"),Math.max(12,w-235)),()->rename(entry.getUUID("id"),entry.getString("name")),unlocked);
+                if(entry.hasUUID("id")){button(10,y,Math.max(20,w-271),font.plainSubstrByWidth(entry.getString("name"),Math.max(10,w-281)),()->rename(entry.getUUID("id"),entry.getString("name")),unlocked);
+                button(w-258,y,43,entry.getInt("repeats")==0?"Inf.":entry.getInt("repeats")+"x",()->repeat(entry.getUUID("id"),entry.getInt("repeats")),unlocked&&!entry.getBoolean("active"));}
                 button(w-212,y,35,entry.getBoolean("strict")?"Input":"Adapt.",()->send("mode",i),unlocked&&!entry.getBoolean("active"));
                 button(w-174,y,50,ChronoFactory.TINT_NAMES[entry.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(i,w-174,y,50,entry.getInt("tint")),unlocked);
                 button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->send("toggle",i),unlocked);

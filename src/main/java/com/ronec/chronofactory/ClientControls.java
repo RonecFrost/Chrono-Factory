@@ -39,10 +39,14 @@ public final class ClientControls{
             e.setCanceled(true);e.setSwingHand(false);
             if(!attackHeld){attackHeld=true;PacketDistributor.sendToServer(ChronoFactory.Click.INSTANCE);}
         }else if(e.isUseItem()){
+            if(Minecraft.getInstance().hitResult instanceof net.minecraft.world.phys.BlockHitResult block&&Minecraft.getInstance().level.getBlockState(block.getBlockPos()).is(TemporalRelay.BLOCK.get()))return;
             if(Minecraft.getInstance().hitResult instanceof net.minecraft.world.phys.EntityHitResult hit&&hit.getEntity() instanceof EchoEntity)return;
             e.setCanceled(true);e.setSwingHand(false);
             if(!useHeld){useHeld=true;PacketDistributor.sendToServer(new ChronoFactory.UiCommand(new UUID(0,0),"open",0));}
         }
+    }
+    public static void relay(TemporalRelay.State msg){
+        Minecraft mc=Minecraft.getInstance();if(mc.screen instanceof RelayScreen screen&&screen.pos.equals(msg.pos()))screen.update(msg.state());else if(msg.open())mc.setScreen(new RelayScreen(msg.pos(),msg.state()));
     }
     public static void inspect(ChronoFactory.InspectState msg){
         Minecraft mc=Minecraft.getInstance();

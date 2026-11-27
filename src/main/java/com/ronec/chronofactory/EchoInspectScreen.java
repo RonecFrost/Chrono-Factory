@@ -46,7 +46,7 @@ public final class EchoInspectScreen extends Screen {
         g.drawString(font,font.plainSubstrByWidth(name,230),left+10,top+10,0xFFBB86FC,false);
         if(!state.getBoolean("available")){g.drawString(font,"Echo unavailable or out of range.",left+10,top+38,0xFFFF9A9A,false);super.render(g,mx,my,partial);return;}
         boolean strict=state.getBoolean("strict");String mode=strict?"Input":"Adaptive";
-        g.drawString(font,mode+"  |  Cycle "+state.getInt("cycle")+"  |  "+state.getInt("step")+"/"+state.getInt("total")+(strict?" ticks":" steps"),left+10,top+23,0xFFBDB1C8,false);
+        g.drawString(font,mode+"  |  Cycle "+state.getInt("cycle")+(state.getInt("repeats")>0?"/"+state.getInt("repeats"):"")+"  |  "+state.getInt("step")+"/"+state.getInt("total")+(strict?" ticks":" steps"),left+10,top+23,0xFFBDB1C8,false);
         g.fill(left+10,top+36,left+242,top+91,0xFF261C31);
         g.drawString(font,"CURRENT TASK",left+15,top+41,0xFFBB86FC,false);
         g.drawString(font,font.plainSubstrByWidth(state.getString("task"),220),left+15,top+53,0xFFF0E5F5,false);
