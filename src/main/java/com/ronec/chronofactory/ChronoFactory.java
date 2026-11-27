@@ -35,6 +35,7 @@ import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
 import net.neoforged.neoforge.event.entity.player.*;
 import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
+import net.neoforged.neoforge.event.entity.item.ItemTossEvent;
 import net.neoforged.neoforge.event.level.BlockEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
@@ -140,7 +141,7 @@ public final class ChronoFactory {
         if(r!=null){if(r.watch.equals(key))finish(p,true);else say(p,"Another Timekeeper is recording.");return;}
         if(p.getPersistentData().contains(BACKUP)){restore(p);return;}
         CompoundTag t=data(s);
-        if(active(p,key,null)){dismiss(p,key,null);if(!creative(s)&&!t.getBoolean("retain")){t.remove("current");put(s,t);}say(p,"Timeline dismissed.");return;}
+        if((!creative(s)&&active(p,key,null))||(creative(s)&&t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")))){dismiss(p,key,creative(s)?t.getCompound("current").getUUID("id"):null);if(!t.getBoolean("retain")){t.remove("current");put(s,t);}say(p,"Timeline dismissed.");return;}
         if(t.contains("current")){manifest(p,s,t.getCompound("current"));return;}
         if(p.isSpectator()){say(p,"Spectators cannot record.");return;}
         int slot=p.getInventory().selected;
@@ -155,7 +156,8 @@ public final class ChronoFactory {
     }
     static void finish(ServerPlayer p,boolean save){
         Recording r=RECORDINGS.remove(p.getUUID());if(r==null){restore(p);return;}
-        if(r.menuSeen)captureTransfers(p,r);
+        if(r.menuSeen&&r.container!=null)captureTransfers(p,r);
+        if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
         r.move(p);
         ItemStack s=find(p,r.watch);
         if(save&&!s.isEmpty()&&r.actions.size()>1){
@@ -170,7 +172,7 @@ public final class ChronoFactory {
         for(int i=0;i<p.getInventory().getContainerSize();i++){ItemStack s=p.getInventory().getItem(i);if(!s.isEmpty()&&s!=timekeeper)extras.add(s.copy());}
         p.getInventory().clearContent();p.getInventory().load(b.getList("inventory",Tag.TAG_COMPOUND));
         p.getInventory().setItem(b.getInt("slot"),timekeeper);
-        for(ItemStack s:extras)if(!p.getInventory().add(s)&&!s.isEmpty())p.drop(s,false);
+        for(ItemStack s:extras){p.getInventory().add(s);if(!s.isEmpty())p.drop(s,false);}
         persistent.remove(BACKUP);
         if("creative".equals(b.getString("mode")))p.setGameMode(GameType.CREATIVE);
         p.inventoryMenu.broadcastChanges();
@@ -179,7 +181,7 @@ public final class ChronoFactory {
     static void login(PlayerEvent.PlayerLoggedInEvent e){if(e.getEntity() instanceof ServerPlayer p){RECORDINGS.remove(p.getUUID());restore(p);}}
     static void death(LivingDeathEvent e){if(e.getEntity() instanceof ServerPlayer p&&p.getPersistentData().contains(BACKUP))finish(p,false);}
     static void toss(ItemTossEvent e){if(e.getPlayer() instanceof ServerPlayer p&&RECORDINGS.containsKey(p.getUUID())&&watch(e.getEntity().getItem())){e.setCanceled(true);p.getInventory().add(e.getEntity().getItem());}}
-    static String itemKey(ItemStack s){return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(s.getItem()).toString();}
+    static String itemKey(ItemStack s){ItemStack copy=s.copyWithCount(1);if(copy.isDamageableItem())copy.setDamageValue(0);return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(copy.getItem()).toString()+":"+copy.getComponentsPatch();}
     static Map<String,ItemStack> snapshot(ServerPlayer p){
         Map<String,ItemStack> map=new HashMap<>();
         for(int i=0;i<36;i++){ItemStack s=p.getInventory().getItem(i);if(s.isEmpty()||watch(s))continue;String k=itemKey(s);if(map.containsKey(k))map.get(k).grow(s.getCount());else map.put(k,s.copy());}
@@ -240,20 +242,21 @@ public final class ChronoFactory {
         if(wanted.isEmpty()){for(int i=0;i<36;i++)if(f.getInventory().getItem(i).isEmpty()){if(i!=0){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(i,old);f.getInventory().setItem(0,ItemStack.EMPTY);}f.getInventory().selected=0;return true;}return false;}
         for(int i=0;i<36;i++)if(matches(f.getInventory().getItem(i),wanted)){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(0,f.getInventory().getItem(i));f.getInventory().setItem(i,old);f.getInventory().selected=0;return true;}return false;
     }
-    static boolean transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take){
-        if(h==null||wanted.isEmpty())return false;
+    static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take){
+        int initial=n;
+        if(h==null||wanted.isEmpty())return 0;
         Inventory inv=f.getInventory();
         if(take){
             int available=0,space=0;
             for(int i=0;i<h.getSlots();i++){ItemStack s=h.getStackInSlot(i);if(matches(s,wanted))available+=h.extractItem(i,n,true).getCount();}
             for(int i=0;i<36;i++){ItemStack s=inv.getItem(i);if(s.isEmpty())space+=wanted.getMaxStackSize();else if(ItemStack.isSameItemSameComponents(s,wanted))space+=Math.max(0,s.getMaxStackSize()-s.getCount());}
-            if(available<n||space<n)return false;
-            for(int i=0;i<h.getSlots()&&n>0;i++){if(!matches(h.getStackInSlot(i),wanted))continue;ItemStack s=h.extractItem(i,n,false);int got=s.getCount();inv.add(s);if(!s.isEmpty())f.drop(s,false);n-=got;}return n==0;
+            if(available<n||space<n)return 0;
+            for(int i=0;i<h.getSlots()&&n>0;i++){if(!matches(h.getStackInSlot(i),wanted))continue;ItemStack s=h.extractItem(i,n,false);int got=s.getCount();inv.add(s);if(!s.isEmpty())f.drop(s,false);n-=got;}return initial-n;
         }
-        int available=0;for(int i=0;i<36;i++)if(matches(inv.getItem(i),wanted))available+=inv.getItem(i).getCount();if(available<n)return false;
+        int available=0;for(int i=0;i<36;i++)if(matches(inv.getItem(i),wanted))available+=inv.getItem(i).getCount();if(available<n)return 0;
         // Insert only actual stacks, preserving durability and components. Partial transfers track remaining count.
         for(int i=0;i<36&&n>0;i++){ItemStack s=inv.getItem(i);if(!matches(s,wanted))continue;int want=Math.min(n,s.getCount());ItemStack pending=s.copyWithCount(want);for(int j=0;j<h.getSlots()&&!pending.isEmpty();j++)pending=h.insertItem(j,pending,false);int moved=want-pending.getCount();s.shrink(moved);n-=moved;}
-        return n==0;
+        return initial-n;
     }
     static void collect(FakePlayer f,ServerLevel l,BlockPos pos){for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,new AABB(pos).inflate(1.2))){ItemStack s=e.getItem();if(f.getInventory().add(s)&&s.isEmpty())e.discard();else e.setItem(s);}}
     static void levelTick(LevelTickEvent.Post e){
@@ -270,11 +273,11 @@ public final class ChronoFactory {
             for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack s=f.getInventory().getItem(i);if(!s.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,s.copy()));}
             f.getInventory().clearContent();if(stand!=null)stand.discard();return true;
         }
-        if(owner==null||watch.isEmpty())return false;
+        if(owner==null||watch.isEmpty()){f.getInventory().clearContent();return false;}
         if(stand==null){stand=new ArmorStand(l,here.x,here.y,here.z);stand.setNoGravity(true);stand.setInvulnerable(true);stand.setMarker(true);stand.setShowArms(true);stand.setCustomName(Component.literal(a.getString("name")+" [Echo]"));stand.setCustomNameVisible(true);stand.addTag("chronofactory_echo");l.addFreshEntity(stand);a.putUUID("stand",stand.getUUID());}
         ListTag actions=timeline(a.getCompound("timeline"));if(actions.isEmpty())return true;
         int index=a.getInt("index")%actions.size();CompoundTag action=actions.getCompound(index);String type=action.getString("type");Vec3 target=vec(action);boolean done=false;
-        if(!l.hasChunkAt(BlockPos.containing(target)))return false;
+        if(!l.hasChunkAt(BlockPos.containing(target))){f.getInventory().clearContent();return false;}
         if("move".equals(type)){
             Vec3 diff=target.subtract(here);double distance=diff.length();Vec3 next=distance<=.3?target:here.add(diff.scale(.3/distance));
             if(l.noCollision(f,f.getBoundingBox().move(next.subtract(here)))){position=action.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);a.put("position",position);here=next;done=distance<=.3;}
@@ -284,10 +287,10 @@ public final class ChronoFactory {
                 if("transfer".equals(type)){
                     IItemHandler h=handler(l,pos);
                     // Simulate the entire output before committing to avoid repeating partial transfers.
-                    int n=action.getInt("count");if(!action.getBoolean("take")&&h!=null){
-                        int capacity=0;for(int j=0;j<h.getSlots();j++){ItemStack rest=h.insertItem(j,wanted.copyWithCount(Math.min(n,wanted.getMaxStackSize())),true);capacity+=Math.min(n,wanted.getMaxStackSize())-rest.getCount();}
-                        if(capacity>=n)done=transfer(f,h,wanted,n,false);
-                    }else done=transfer(f,h,wanted,n,true);
+                    int n=action.getInt("count")-a.getInt("transferred");
+                    int moved=transfer(f,h,wanted,n,action.getBoolean("take"));
+                    a.putInt("transferred",a.getInt("transferred")+moved);
+                    done=a.getInt("transferred")>=action.getInt("count");
                 }else if(equip(f,wanted)){
                     f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
                     BlockState state=l.getBlockState(pos);String block=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
@@ -303,8 +306,9 @@ public final class ChronoFactory {
                 }
             }
         }
-        if(done){a.putInt("index",(index+1)%actions.size());a.putFloat("progress",0);}
-        stand.setPos(here.x,here.y,here.z);stand.setYRot(position.getFloat("yaw"));stand.setItemSlot(EquipmentSlot.MAINHAND,f.getMainHandItem().copy());stand.setCustomName(Component.literal(a.getString("name")+(done||"move".equals(type)?" [Echo]":" [Stasis]")));
+        if(done){a.putInt("index",(index+1)%actions.size());a.putFloat("progress",0);a.putInt("transferred",0);}
+        stand.setPos(here.x,here.y,here.z);stand.setYRot(position.getFloat("yaw"));// Do not equip the visual proxy with real stacks: it must never drop duplicate tools.
+        stand.setCustomName(Component.literal(a.getString("name")+(done||"move".equals(type)?" [Echo]":" [Stasis]")));
         a.put("inventory",f.getInventory().save(new ListTag()));f.getInventory().clearContent();
         if(!a.getBoolean("creative"))energy(watch,energy(watch)-(done||"move".equals(type)?8:2));
         return false;
