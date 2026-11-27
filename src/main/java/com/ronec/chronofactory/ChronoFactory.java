@@ -246,6 +246,8 @@ public final class ChronoFactory {
         CompoundTag pendingUse;
         CraftingReplay.Capture craftCapture;
         CompoundTag itemHold;
+        int lastItemTick=-1;
+        EnchantReplay.Capture enchantCapture;
         final Map<Integer,ItemStack> books=new HashMap<>();
         CompoundTag transaction;
         Map<String,ItemStack> transactionBefore;
@@ -327,14 +329,14 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.remove(p.getUUID());if(r==null){restore(p);return;}
         if(r.menuSeen&&r.container!=null)captureTransfers(p,r);
         else if(r.pendingUse!=null)r.add(r.pendingUse);
-        ArsSupport.observe(p,r);r.closeUse(r.tick);ItemActions.close(r);
+        ArsSupport.observe(p,r);r.closeUse(r.tick);ItemActions.close(p,r);
         if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
         MenuTransactions.finish(p,r);
         r.move(p);
         ItemStack s=find(p,r.watch);
         if(save&&!s.isEmpty()){
             if(r.actions.size()==1){CompoundTag idle=point(p,"wait");idle.putInt("ticks",Math.max(1,Math.min(1200,r.tick)));r.add(idle);}
-            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.putIntArray("motion",r.motion.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("repeats",repeats(t));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
+            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.putIntArray("motion",r.motion.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("timedItems",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("repeats",repeats(t));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
         }
         restore(p);say(p,save&&!s.isEmpty()?"RECORDING SAVED ("+r.actions.size()+" steps). Left-click to summon the Echo.":"Recording cancelled; inventory restored.");
     }
@@ -379,7 +381,10 @@ public final class ChronoFactory {
     }
     static void onItemUse(PlayerInteractEvent.RightClickItem e){
         if(e.isCanceled()||!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||e.getHand()!=InteractionHand.MAIN_HAND||watch(e.getItemStack()))return;
-        Recording r=RECORDINGS.get(p.getUUID());if(r!=null)ItemActions.record(p,r,e.getItemStack());
+        Recording r=RECORDINGS.get(p.getUUID());if(r!=null){ArsSupport.observe(p,r);ItemActions.record(p,r,e.getItemStack());}
+    }
+    public static void nativeRelease(ServerPlayer p){
+        Recording r=RECORDINGS.get(p.getUUID());if(r!=null&&p.isUsingItem())ItemActions.release(p,r);
     }
     static void onEntityAttack(AttackEntityEvent e){
         if(e.isCanceled()||!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
@@ -394,6 +399,7 @@ public final class ChronoFactory {
         if(watch(stack)){e.setCanceled(true);p.getInventory().add(stack);return;}
         r.move(p);CompoundTag a=point(p,"drop");a.putInt("count",stack.getCount());a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
         Vec3 v=e.getEntity().getDeltaMovement();a.putDouble("vx",v.x);a.putDouble("vy",v.y);a.putDouble("vz",v.z);r.add(a);
+        if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","drop_item");raw.putInt("tick",r.raw.size()/3);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
         if(r.menuSeen)adjustBaseline(r,stack,-stack.getCount());
     }
     static void pickup(ItemEntityPickupEvent.Post e){
@@ -428,9 +434,10 @@ public final class ChronoFactory {
     }
     public static void rawMenuButton(ServerPlayer p,int button){
         if(p instanceof FakePlayer)return;Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
-        MenuTransactions.button(p,r,button);if(r.gui.size()>=4096)return;
+        EnchantReplay.before(p,r,button);MenuTransactions.button(p,r,button);if(r.gui.size()>=4096)return;
         CompoundTag event=new CompoundTag();event.putString("kind","button");event.putInt("tick",r.raw.size()/3);event.putInt("button",button);r.gui.add(event);
     }
+    public static void afterMenuButton(ServerPlayer p){Recording r=RECORDINGS.get(p.getUUID());if(r!=null)EnchantReplay.after(p,r);}
     public static void afterGui(ServerPlayer p){
         if(p instanceof FakePlayer)return;
         Recording r=RECORDINGS.get(p.getUUID());
@@ -446,7 +453,7 @@ public final class ChronoFactory {
                 if(r.heldUse!=null)r.heldUse.putInt("releaseTick",r.tick);
                 r.useDown=false;
                 if(r.pendingUse!=null&&r.pendingUse.getInt("holdId")==r.useEpoch)r.pendingUse.putInt("releaseTick",r.tick);
-                r.closeUse(r.tick);ItemActions.close(r);
+                r.closeUse(r.tick); // Native release packet supplies the final shot angle.
             }
         }else{
             if(edge.down()&&!r.attackDown){r.attackDown=true;r.attackTarget=null;r.attackTargetStart=r.tick;}
@@ -587,7 +594,7 @@ public final class ChronoFactory {
         if(r!=null){
             if(!r.dimension.equals(p.level().dimension().location().toString())||find(p,r.watch).isEmpty()){finish(p,false);return;}
             ArsSupport.observe(p,r);MenuTransactions.tick(p,r);
-            if(r.itemHold!=null&&(!r.useDown&&!p.isUsingItem()||!matches(p.getMainHandItem(),template(r.itemHold,p.serverLevel()))))ItemActions.close(r);
+            if(r.itemHold!=null&&(!r.useDown&&!p.isUsingItem()||!matches(p.getMainHandItem(),template(r.itemHold,p.serverLevel()))))ItemActions.close(p,r);
             int flags=r.tick-r.rawLast<=10?r.rawFlags:0;
             // Record the key state at every server tick, not only successful world actions.
             r.raw.add(flags|(p.getInventory().selected<<12));r.raw.add(Float.floatToIntBits(p.getYRot()));r.raw.add(Float.floatToIntBits(p.getXRot()));
@@ -720,6 +727,7 @@ public final class ChronoFactory {
     }
     static void sweepItems(FakePlayer f,ServerLevel l,Vec3 here){
         f.setPos(here.x,here.y,here.z);
+        ItemActions.collectArrows(f,l);
         for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(1.5,.75,1.5),it->!it.hasPickUpDelay()&&!watch(it.getItem()))){
             ItemStack stack=e.getItem(),part=stack.copy();int before=part.getCount();f.getInventory().add(part);int moved=before-part.getCount();
             if(moved>0){stack.shrink(moved);if(stack.isEmpty())e.discard();else e.setItem(stack.copy());}
@@ -785,7 +793,7 @@ public final class ChronoFactory {
             else if(index<actions.size()&&"craft".equals(task)){CompoundTag action=actions.getCompound(index);task="Craft "+action.getInt("crafts")+" x "+itemName(ItemStack.parseOptional(p.registryAccess(),action.getCompound("result")));}
             else if(index<actions.size()&&"transfer".equals(task)){CompoundTag action=actions.getCompound(index);task=(action.getBoolean("take")?"Withdraw ":"Deposit ")+action.getInt("count")+" x "+itemName(template(action,p.serverLevel()));}
             state.putString("task",task.isEmpty()?"Waiting":task);
-            state.putInt("xpLevel",a.getInt("xpLevel"));state.put("inventory",a.getList("inventory",Tag.TAG_COMPOUND).copy());
+            state.putInt("xpLevel",a.getInt("xpLevel"));if(a.contains("arsMana"))state.putDouble("arsMana",a.getDouble("arsMana"));state.put("inventory",a.getList("inventory",Tag.TAG_COMPOUND).copy());
             if(a.contains("strictCursor"))state.put("cursor",a.getCompound("strictCursor").copy());
             break;
         }
@@ -794,6 +802,7 @@ public final class ChronoFactory {
     static String itemName(ItemStack s){return s.isEmpty()?"empty hand":s.getHoverName().getString();}
     static String coords(BlockPos p){return p.getX()+", "+p.getY()+", "+p.getZ();}
     static int groundDrop(FakePlayer f,ItemStack wanted,int count,CompoundTag action){
+        f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));
         int left=count;
         for(int i=0;i<36&&left>0;i++){ItemStack st=f.getInventory().getItem(i);if(!matches(st,wanted))continue;
             int n=Math.min(left,st.getCount());ItemStack removed=st.copyWithCount(n);
@@ -901,7 +910,7 @@ public final class ChronoFactory {
                 }
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
                 a.remove("boundaryDropped");
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("lastItemClock");a.remove("itemFired");a.remove("itemStarted");a.remove("playClock");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -917,7 +926,7 @@ public final class ChronoFactory {
             if(phase%2==0)particles(l,here,phase,color,position.getFloat("yaw"));
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-8);return false;
         }
-        ArsSupport.manaTick(f,a);
+        ArsSupport.manaTick(f,a);a.putInt("playClock",a.getInt("playClock")+1);f.getCooldowns().tick();
         if(strict){StrictReplay.MacroPlayer macro=(StrictReplay.MacroPlayer)f;StrictReplay.restoreCursor(macro,a);StrictReplay.step(l,a,tl,macro,echo,watch);return false;}
         int index=a.getInt("index");CompoundTag action=actions.getCompound(index);String type=action.getString("type");Vec3 target=vec(action);boolean done=false,working=false,walking=false,swung=false;
         String reason="Waiting: "+type;
@@ -996,7 +1005,9 @@ public final class ChronoFactory {
             BlockPos pos=BlockPos.of(action.getLong("pos"));
             if(!l.hasChunkAt(pos))reason="Target chunk is not loaded";
             else if(here.distanceToSqr(Vec3.atCenterOf(pos))>36)reason="Target out of reach at "+coords(pos);
-            else if("menu_transaction".equals(type)){
+            else if("enchant".equals(type)){
+                ItemActions.Outcome result=EnchantReplay.perform(l,(StrictReplay.MacroPlayer)f,action,pos);done=result.done();working=result.working();swung=working;reason=result.reason();
+            }else if("menu_transaction".equals(type)){
                 ItemActions.Outcome result=MenuTransactions.perform(l,(StrictReplay.MacroPlayer)f,a,action);done=result.done();working=result.working();reason=result.reason();
             }else if("craft".equals(type)){
                 CraftingReplay.Outcome result=CraftingReplay.perform(l,f,a,action,pos);done=result.done();working=result.working();swung=working;reason=result.reason();
@@ -1074,8 +1085,9 @@ public final class ChronoFactory {
         }
         if(!strict&&"wait".equals(type))sweepItems(f,l,here);
         ItemActions.collectXp(f,l);ItemActions.saveXp(f,a);ArsSupport.saveMana(f,a);
+        if(!"move".equals(type)&&("item_use".equals(type)||"attack_entity".equals(type)||"drop".equals(type)||"use".equals(type))){position.putFloat("yaw",f.getYRot());position.putFloat("pitch",f.getXRot());a.put("position",position);}
         if(!"air_swing".equals(type)&&!"move".equals(type)){a.remove("sweepPos");a.remove("sweepProgress");}
-        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("itemStarted");a.remove("segmentSpeed");reason="Completed "+type;}
+        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("itemStarted");a.remove("itemFired");a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);
         double moved=echo.position().distanceTo(here);
         echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));echo.setShiftKeyDown(position.getBoolean("sneak"));

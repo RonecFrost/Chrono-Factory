@@ -25,6 +25,14 @@ public abstract class ContainerInputMixin {
     private void chronoButton(net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket packet,CallbackInfo ci){
         if(player.server.isSameThread()&&packet.containerId()==player.containerMenu.containerId)ChronoFactory.rawMenuButton(player,packet.buttonId());
     }
+    @Inject(method="handleContainerButtonClick",at=@At("RETURN"))
+    private void chronoAfterButton(net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket packet,CallbackInfo ci){
+        if(player.server.isSameThread())ChronoFactory.afterMenuButton(player);
+    }
+    @Inject(method="handlePlayerAction",at=@At("HEAD"))
+    private void chronoRelease(net.minecraft.network.protocol.game.ServerboundPlayerActionPacket packet,CallbackInfo ci){
+        if(player.server.isSameThread()&&packet.getAction()==net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.RELEASE_USE_ITEM)ChronoFactory.nativeRelease(player);
+    }
     @Inject(method="handleContainerClose",at=@At("HEAD"))
     private void chronoClose(ServerboundContainerClosePacket packet,CallbackInfo ci){
         if(player.server.isSameThread())ChronoFactory.rawGui(player,0,0,0,true);

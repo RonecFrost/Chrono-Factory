@@ -1,4 +1,4 @@
-# Chrono Factory 0.7.0-alpha
+# Chrono Factory 0.7.1-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -72,3 +72,10 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Test in disposable world; compile does not establish gameplay compatibility.
 
 - Input air-use holds now track elapsed charge ticks separately from the fake player's transient item stack; release uses real current stack. Actual entity attack events are captured. These combat paths remain experimental.
+
+## 0.7.1 action timing, release aim, enchanting and Ars fixes
+- Adaptive preserves recorded intervals between item-use attempts (including held RMB throwing). Input uses actual recorded item/block use events rather than inventing extra clicks for new recordings. Native release packet records bow draw length and firing yaw/pitch; crossbow shot/throw uses the actual use-event angle. Native projectile spread remains. Drops record actual velocity, angle and quantity in both modes. Re-record these timelines. Native cooldowns tick for Echoes.
+- Arrow pickup invokes native arrow playerTouch for pickup-allowed nearby arrows, honoring grounded/shake and inventory restrictions. Infinity/creative-only and nonrecoverable arrows remain nonrecoverable.
+- Dedicated Adaptive enchanting records a successful option 1/2/3, minimum level shown and actual equipment. Waits for recorded/current required level and lapis; calls real menu option, pays native costs, keeps real randomized output. Input continues replaying actual button selection. Re-record enchantments.
+- Ars spell tier is a class with value field, not enum; fixed mana initialization. Spell use calls native caster directly, with explicit slot validity and mana diagnostics. Actual book metadata stays intact; no guarantee of glyph or addon fake-player support.
+- Test in disposable world: throw five items with held RMB, record turning during bow draw, crossbow load/fire, arrow recovery, enchant each row with insufficient/sufficient levels, preconfigured and edited Ars books. Build is not gameplay verification.

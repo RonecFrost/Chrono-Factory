@@ -11,13 +11,13 @@ final class MenuTransactions{
     static void cancelUnopened(ChronoFactory.Recording r){if(r.transaction!=null&&!r.transaction.getBoolean("opened")){r.transaction=null;r.transactionBefore=null;}}
     static void tick(ServerPlayer p,ChronoFactory.Recording r){
         if(r.transaction==null)return;
-        if(p.containerMenu!=p.inventoryMenu){r.transaction.putBoolean("opened",true);return;}
+        if(p.containerMenu!=p.inventoryMenu){r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu)r.transaction.putBoolean("enchantMenu",true);return;}
         if(r.transaction.getBoolean("opened"))finish(p,r);
         else if(r.tick>r.transaction.getInt("recordTick")){CompoundTag action=r.transaction;r.transaction=null;r.transactionBefore=null;action.remove("clicks");r.add(action);}
     }
     static void click(ServerPlayer p,ChronoFactory.Recording r,int slot,int button,int click){
         if(r.transaction==null||p.containerMenu==p.inventoryMenu)return;
-        r.transaction.putBoolean("opened",true);
+        r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu)r.transaction.putBoolean("enchantMenu",true);
         ListTag clicks=r.transaction.getList("clicks",Tag.TAG_COMPOUND);if(clicks.size()>=512)return;
         CompoundTag a=new CompoundTag();a.putInt("slot",slot);a.putInt("button",button);a.putInt("click",click);
         if(slot>=0&&slot<p.containerMenu.slots.size()){
@@ -30,11 +30,12 @@ final class MenuTransactions{
     }
     static void button(ServerPlayer p,ChronoFactory.Recording r,int button){
         if(r.transaction==null||p.containerMenu==p.inventoryMenu)return;
-        r.transaction.putBoolean("opened",true);ListTag clicks=r.transaction.getList("clicks",Tag.TAG_COMPOUND);if(clicks.size()>=512)return;
+        r.transaction.putBoolean("opened",true);if(p.containerMenu instanceof EnchantmentMenu)r.transaction.putBoolean("enchantMenu",true);ListTag clicks=r.transaction.getList("clicks",Tag.TAG_COMPOUND);if(clicks.size()>=512)return;
         CompoundTag a=new CompoundTag();a.putBoolean("menuButton",true);a.putInt("button",button);clicks.add(a);
     }
     static void finish(ServerPlayer p,ChronoFactory.Recording r){
         CompoundTag a=r.transaction;if(a==null)return;r.transaction=null;
+        if(a.getBoolean("enchantMenu")){r.transactionBefore=null;return;}
         if(!a.getBoolean("opened")){a.remove("clicks");r.add(a);return;}
         Map<String,ItemStack> after=ChronoFactory.snapshot(p),before=r.transactionBefore;r.transactionBefore=null;if(before==null)return;
         ListTag inputs=new ListTag(),outputs=new ListTag();Set<String> keys=new HashSet<>(before.keySet());keys.addAll(after.keySet());
