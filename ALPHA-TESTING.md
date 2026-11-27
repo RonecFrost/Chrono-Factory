@@ -1,4 +1,4 @@
-# Chrono Factory 0.6.0-alpha
+# Chrono Factory 0.7.0-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -64,3 +64,9 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Furnace, smoker and blast furnace use native input/fuel/output slots, no bulk dump or overflow to unrelated slots; output must exist before withdrawal. Other item-handler machines retain existing transfer mechanics. Re-record furnace timelines. Test regular crafting, shift-crafting, buckets/remainders, stonecutting, furnace fuel/input/output, no-input stasis, full inventory, repeated remanifestation, and modded recipes in a disposable world.
 
 - Furnace transactions are captured per server click to distinguish player transfers from smelting activity occurring during the visit. Input personal crafting grid is cleared through native menu cleanup on closing and at loop boundaries.
+
+## 0.7.0 experimental combat and interactions
+- Death saves recording and preserves only the recording watch on respawn; other gear uses vanilla death rules. New main-hand air-use action and held item durations, native projectile use, nearby XP orbs, entity attacks; Input support is preliminary (held bow timing especially needs testing). XP reset between manifestations. Echoes still invulnerable and not independent combat AI.
+- Optional Ars bridge matches spellbooks by item/tier, records changed spell slots from server book metadata, edits only those slots, and casts the current spell in recorded slot. Mana uses Ars API where available; no hard dependency. No guarantee of every glyph, add-on, or fake-player compatibility. Main hand only. Re-record.
+- Adaptive generic server-menu transactions with no exposed storage record net ingredients/results/XP and attempt native menu clicks with item matching; actual output is computed by workstation. Enchanting random offers can vary. Custom client-only GUIs (including Rechiseled) and non-inventory resource costs require specific adapters. Persistent inventories still use storage transfers. No arbitrary delta-to-item generation.
+- Test in disposable world; compile does not establish gameplay compatibility.

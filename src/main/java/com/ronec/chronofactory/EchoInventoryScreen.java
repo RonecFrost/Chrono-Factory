@@ -23,7 +23,7 @@ public final class EchoInventoryScreen extends AbstractContainerScreen<EchoInven
     }
     @Override protected void renderLabels(GuiGraphics g,int mx,int my){
         String name=info.getString("name");g.drawString(font,font.plainSubstrByWidth(name.isEmpty()?"TEMPORAL ECHO":name,imageWidth-18),9,9,0xFFBB86FC,false);
-        g.drawString(font,(info.getBoolean("strict")?"Input":"Adaptive")+" | Cycle "+info.getInt("cycle")+(info.getInt("repeats")>0?"/"+info.getInt("repeats"):""),9,20,0xFFBDB1C8,false);
+        g.drawString(font,(info.getBoolean("strict")?"Input":"Adaptive")+" | XP "+info.getInt("xpLevel")+" | Cycle "+info.getInt("cycle")+(info.getInt("repeats")>0?"/"+info.getInt("repeats"):""),9,20,0xFFBDB1C8,false);
         g.drawString(font,font.plainSubstrByWidth("Task: "+info.getString("task"),imageWidth-18),9,31,0xFFF0E5F5,false);
         g.drawString(font,font.plainSubstrByWidth(info.getString("reason"),imageWidth-18),9,42,0xFFE5B975,false);
         g.drawString(font,"Echo inventory (paused)",9,51,0xFFBDB1C8,false);

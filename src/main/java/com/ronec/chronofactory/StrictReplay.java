@@ -48,7 +48,7 @@ public final class StrictReplay {
     static void finishCycle(MacroPlayer f,CompoundTag a){
         f.closeContainer();f.inventoryMenu.removed(f);ItemStack cursor=f.inventoryMenu.getCarried();f.inventoryMenu.setCarried(ItemStack.EMPTY);
         if(!cursor.isEmpty()){f.getInventory().add(cursor);if(!cursor.isEmpty())f.drop(cursor,false);}a.remove("strictCursor");
-        a.remove("strictVx");a.remove("strictVy");a.remove("strictVz");a.remove("strictUseDelay");a.remove("strictMinePos");a.remove("strictMineProgress");a.remove("strictAttackDelay");a.remove("strictFlags");
+        f.stopUsingItem();a.remove("itemStarted");a.remove("strictVx");a.remove("strictVy");a.remove("strictVz");a.remove("strictUseDelay");a.remove("strictMinePos");a.remove("strictMineProgress");a.remove("strictAttackDelay");a.remove("strictFlags");
     }
     static void forget(MacroPlayer f,CompoundTag a){finishCycle(f,a);PLAYERS.remove(f.getUUID());}
     static void clickGui(MacroPlayer f,CompoundTag event){
@@ -114,7 +114,9 @@ public final class StrictReplay {
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
             CompoundTag event=gui.getCompound(cursor++);
-            if("button".equals(event.getString("kind"))){if(f.containerMenu!=f.inventoryMenu&&f.containerMenu.stillValid(f))f.containerMenu.clickMenuButton(f,event.getInt("button"));task="Select recipe";}
+            if("ars_edit".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ArsSupport.edit(f.getMainHandItem(),event,l);task="Configure spell";}
+            else if("item_use".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND);hadRecordedUse=true;delay=4;swung=true;task="Use item";}
+            else if("button".equals(event.getString("kind"))){if(f.containerMenu!=f.inventoryMenu&&f.containerMenu.stillValid(f))f.containerMenu.clickMenuButton(f,event.getInt("button"));task="Select recipe";}
             else if("use".equals(event.getString("kind"))){recordedUse(l,f,event);hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
             else{clickGui(f,event);task=event.getBoolean("close")?"Close inventory":"Click slot "+event.getInt("slot");}
         }
@@ -140,12 +142,12 @@ public final class StrictReplay {
                 if(!a.contains("strictMinePos")||a.getLong("strictMinePos")!=pos.asLong()){a.putLong("strictMinePos",pos.asLong());a.putFloat("strictMineProgress",0);}
                 float progress=a.getFloat("strictMineProgress")+state.getDestroyProgress(f,l,pos);a.putFloat("strictMineProgress",progress);
                 if(progress>=1){f.gameMode.destroyBlock(pos);a.remove("strictMinePos");a.remove("strictMineProgress");attackDelay=5;}
-            }else if(hit.getType()==HitResult.Type.MISS){a.remove("strictMinePos");a.remove("strictMineProgress");}
+            }else if(hit.getType()==HitResult.Type.MISS){a.remove("strictMinePos");a.remove("strictMineProgress");if(attackDelay==0&&ItemActions.attack(f))attackDelay=10;}
         }else{a.remove("strictMinePos");a.remove("strictMineProgress");}
         a.putInt("strictAttackDelay",attackDelay);
         if((flags&DROP)!=0&&(previous&DROP)==0&&!f.getMainHandItem().isEmpty())f.drop(f.getMainHandItem().split(1),false);
         
-        ChronoFactory.sweepItems(f,l,f.position());
+        ChronoFactory.sweepItems(f,l,f.position());ItemActions.collectXp(f,l);ItemActions.saveXp(f,a);ArsSupport.saveMana(f,a);
         Vec3 now=f.position();CompoundTag position=ChronoFactory.point(f,"move");a.put("position",position);
         boolean moving=actual.horizontalDistanceSqr()>.00001;
         if("Idle".equals(task)&&desired.lengthSqr()>.00001)task=moving?"Following recorded movement":"Movement obstructed; continuing clock";
