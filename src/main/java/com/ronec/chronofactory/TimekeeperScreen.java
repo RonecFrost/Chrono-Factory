@@ -143,7 +143,7 @@ public final class TimekeeperScreen extends Screen {
         String status=recording()?"RECORDING":running()?(state.getInt("pausedCount")>0?"ECHO ACTIVE / PAUSED":"ECHO ACTIVE"):hasCurrent()?"RECORDING READY":"NO RECORDING";
         if(state.getBoolean("otherRecording"))status="ANOTHER WATCH IS RECORDING";else if(state.getBoolean("preview"))status="ROUTE PREVIEW ARMED";
         g.drawString(font,status,left+10,top+52,recording()?0xFFFF6C84:running()?0xFF7BE0AB:purple,false);
-        g.drawString(font,state.getInt("steps")+" steps  |  "+state.getInt("activeCount")+" active echoes",left+10,top+65,grey,false);
+        g.drawString(font,font.plainSubstrByWidth(recording()?state.getInt("steps")+" steps | "+(state.getInt("recordTicks")/20)+"s recorded":state.getInt("steps")+" steps | "+state.getInt("activeCount")+" active | "+state.getInt("segments")+" segments",w-20),left+10,top+65,grey,false);
         if(creative()){
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;

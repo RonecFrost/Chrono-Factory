@@ -239,7 +239,7 @@ public final class ChronoFactory {
         for(int i=0;i<p.getInventory().getContainerSize();i++){ItemStack s=p.getInventory().getItem(i);if(watch(s)&&data(s).hasUUID("id")&&data(s).getUUID("id").equals(key))return s;}
         return ItemStack.EMPTY;
     }
-    static WorldData world(ServerLevel l){WorldData d=l.getDataStorage().computeIfAbsent(new SavedData.Factory<>(WorldData::new,WorldData::load,null),"chrono_factory");if(!d.hydrated){d.hydrated=true;for(Tag x:d.echoes){CompoundTag job=(CompoundTag)x;CompoundTag tl=job.getCompound("timeline");CompoundTag full=TimelineStorage.load(l.getServer(),tl);if(full!=null)job.put("timeline",full);else job.putBoolean("storageMissing",true);}}return d;}
+    static WorldData world(ServerLevel l){WorldData d=l.getDataStorage().computeIfAbsent(new SavedData.Factory<>(WorldData::new,WorldData::load,null),"chrono_factory");if(!d.hydrated){d.hydrated=true;for(Tag x:d.echoes){CompoundTag job=(CompoundTag)x;CompoundTag tl=job.getCompound("timeline");CompoundTag full=TimelineStorage.load(l.getServer(),tl);if(full!=null){if(!full.hasUUID("storage")&&!timeline(full).isEmpty()){CompoundTag ref=TimelineStorage.store(l.getServer(),full);if(ref!=null){full=TimelineStorage.attach(ref,full);d.setDirty();}}job.put("timeline",full);}else job.putBoolean("storageMissing",true);}}return d;}
     static final class WorldData extends SavedData{
         final ListTag echoes=new ListTag();boolean hydrated;
         static WorldData load(CompoundTag t,HolderLookup.Provider r){WorldData d=new WorldData();d.echoes.addAll(t.getList("echoes",Tag.TAG_COMPOUND));return d;}
@@ -253,6 +253,7 @@ public final class ChronoFactory {
         final UUID watch;
         final boolean creativeRecording;
         String limitReason="";
+        int checkpointTick;
         final String dimension;
         final ListTag actions=new ListTag();
         CompoundTag last;
@@ -344,8 +345,11 @@ public final class ChronoFactory {
         p.getInventory().clearContent();p.getInventory().setItem(slot,s);
         p.getInventory().selected=slot;p.getInventory().setChanged();
         CompoundTag recordingTag=data(s);recordingTag.putBoolean("recording",true);put(s,recordingTag);
-        RECORDINGS.put(p.getUUID(),new Recording(p,key));
+        TimelineStorage.clearCheckpoint(p.server,key);RECORDINGS.put(p.getUUID(),new Recording(p,key));
         p.inventoryMenu.broadcastChanges();p.inventoryMenu.sendAllDataToRemote();say(p,"RECORDING STARTED - walk or interact, then left-click again to finish. Your original inventory is protected.");
+    }
+    static CompoundTag recordingTimeline(Recording r,CompoundTag t){
+        CompoundTag tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.putIntArray("motion",r.motion.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.put("flights",r.flights);tl.putBoolean("creativeRecording",r.creativeRecording);tl.putBoolean("creativeBreakEvents",true);tl.putBoolean("sampledSpeed",true);tl.putBoolean("explicitTeleport",true);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("timedItems",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("repeats",repeats(t));tl.putInt("tint",tint(t));return tl;
     }
     static void finish(ServerPlayer p,boolean save){
         Recording r=RECORDINGS.remove(p.getUUID());if(r==null){restore(p);return;}
@@ -355,12 +359,14 @@ public final class ChronoFactory {
         if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
         MenuTransactions.finish(p,r);
         r.move(p);
-        ItemStack s=find(p,r.watch);
+        ItemStack s=find(p,r.watch);boolean requested=save;
         if(save&&!s.isEmpty()){
             if(r.actions.size()==1){CompoundTag idle=point(p,"wait");idle.putInt("ticks",Math.max(1,Math.min(1200,r.tick)));r.add(idle);}
-            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putIntArray("raw",r.raw.stream().mapToInt(Integer::intValue).toArray());tl.putIntArray("motion",r.motion.stream().mapToInt(Integer::intValue).toArray());tl.put("gui",r.gui);tl.put("flights",r.flights);tl.putBoolean("creativeRecording",r.creativeRecording);tl.putBoolean("creativeBreakEvents",true);tl.putBoolean("sampledSpeed",true);tl.putBoolean("explicitTeleport",true);tl.putInt("rawTicks",r.raw.size()/3);tl.putBoolean("explicitPickup",true);tl.putBoolean("timedItems",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("repeats",repeats(t));tl.putInt("tint",tint(t));CompoundTag ref=TimelineStorage.store(p.server,tl);
+            CompoundTag t=data(s),tl=recordingTimeline(r,t);CompoundTag ref=TimelineStorage.store(p.server,tl);
             if(ref!=null){t.put("current",ref);put(s,t);}else{save=false;p.sendSystemMessage(Component.literal("[Chrono] Could not write recording files. Previous saved timelines are unchanged. Check server log and disk space."));}
         }
+        if(save||!requested)TimelineStorage.clearCheckpoint(p.server,r.watch);
+        else if(!s.isEmpty()&&TimelineStorage.recover(p,s)){save=true;say(p,"Recovered last complete checkpoint instead of the failed final save.");}
         restore(p);say(p,save&&!s.isEmpty()?"RECORDING SAVED ("+r.actions.size()+" steps). Left-click to summon the Echo.":"Recording cancelled; inventory restored.");
     }
     static void restore(ServerPlayer p){
@@ -370,6 +376,7 @@ public final class ChronoFactory {
         for(int i=0;i<p.getInventory().getContainerSize();i++){ItemStack s=p.getInventory().getItem(i);if(!s.isEmpty()&&s!=timekeeper)extras.add(s.copy());}
         if(!timekeeper.isEmpty()){CompoundTag tag=data(timekeeper);tag.remove("recording");put(timekeeper,tag);}
         p.getInventory().clearContent();p.getInventory().load(b.getList("inventory",Tag.TAG_COMPOUND));
+        for(int k=0;k<p.getInventory().getContainerSize();k++)TimelineStorage.migrateWatch(p.server,p.getInventory().getItem(k));
         p.getInventory().setItem(b.getInt("slot"),timekeeper);
         for(ItemStack s:extras){p.getInventory().add(s);if(!s.isEmpty())p.drop(s,false);}
         persistent.remove(BACKUP);
@@ -377,7 +384,7 @@ public final class ChronoFactory {
         p.getInventory().setChanged();p.inventoryMenu.broadcastChanges();p.inventoryMenu.sendAllDataToRemote();
     }
     static void logout(PlayerEvent.PlayerLoggedOutEvent e){if(e.getEntity() instanceof ServerPlayer p){LaunchPreview.cancel(p);finish(p,false);}}
-    static void login(PlayerEvent.PlayerLoggedInEvent e){if(e.getEntity() instanceof ServerPlayer p){RECORDINGS.remove(p.getUUID());for(int k=0;k<p.getInventory().getContainerSize();k++)TimelineStorage.migrateWatch(p.server,p.getInventory().getItem(k));restore(p);}}
+    static void login(PlayerEvent.PlayerLoggedInEvent e){if(e.getEntity() instanceof ServerPlayer p){RECORDINGS.remove(p.getUUID());for(int k=0;k<p.getInventory().getContainerSize();k++)TimelineStorage.migrateWatch(p.server,p.getInventory().getItem(k));if(p.getPersistentData().contains(BACKUP)){UUID key=p.getPersistentData().getCompound(BACKUP).getUUID("watch");ItemStack st=find(p,key);if(!st.isEmpty()&&TimelineStorage.recover(p,st))p.sendSystemMessage(Component.literal("[Chrono] Recovered recording from the last completed checkpoint."));}restore(p);}}
     static final String DEATH_WATCH="chronofactory_death_watch";
     static void death(LivingDeathEvent e){
         if(e.isCanceled()||!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
@@ -648,7 +655,10 @@ public final class ChronoFactory {
             if(++r.tick%3==0||!p.onGround()||Math.abs(p.getY()-r.last.getDouble("y"))>.015){if(p.containerMenu==p.inventoryMenu)r.move(p);}
             if(r.tick==2){p.inventoryMenu.sendAllDataToRemote();}
             String limit=TimelineStorage.limit(r);
-            if(!limit.isEmpty()){say(p,limit+" — saving recording now.");finish(p,true);p.sendSystemMessage(Component.literal("[Chrono] "+limit+". Recording stopped and saved if storage was available."));}
+            if(!limit.isEmpty()){say(p,limit+" — saving recording now.");finish(p,true);p.sendSystemMessage(Component.literal("[Chrono] "+limit+". Recording stopped. Check the save result."));}
+            else if(r.tick-r.checkpointTick>=2400&&p.containerMenu==p.inventoryMenu&&r.container==null&&r.transaction==null&&r.pendingUse==null&&r.heldUse==null&&r.itemHold==null&&r.attackTarget==null&&!r.useDown&&!r.attackDown){
+                r.checkpointTick=r.tick;ItemStack st=find(p,r.watch);if(!st.isEmpty()&&r.actions.size()>1)TimelineStorage.checkpoint(p.server,r.watch,recordingTimeline(r,data(st)).copy());
+            }
         }
         for(int i=0;i<p.getInventory().getContainerSize();i++){
             ItemStack s=p.getInventory().getItem(i);if(s.getItem()==PERSONAL.get()&&energy(s)<CAPACITY)energy(s,energy(s)+10);
@@ -1260,7 +1270,7 @@ public final class ChronoFactory {
         distinctWatches(p);UUID key=id(s);CompoundTag t=data(s), summary=new CompoundTag();
         Recording rec=RECORDINGS.get(p.getUUID());boolean recording=rec!=null&&rec.watch.equals(key);
         summary.putBoolean("creative",creative(s));summary.putBoolean("retain",t.getBoolean("retain"));summary.putInt("energy",energy(s));
-        summary.putBoolean("recording",recording);summary.putBoolean("otherRecording",rec!=null&&!recording);
+        summary.putBoolean("recording",recording);if(recording){summary.putInt("recordTicks",rec.tick);summary.putInt("maxRecordTicks",TimelineStorage.MAX_TICKS);summary.putInt("checkpointTick",rec.checkpointTick);}summary.putBoolean("otherRecording",rec!=null&&!recording);
         summary.putInt("steps",recording?rec.actions.size():t.contains("current")?TimelineStorage.count(t.getCompound("current")):0);
         summary.putInt("repeats",t.contains("current")?repeats(t.getCompound("current")):repeats(t));summary.putBoolean("current",t.contains("current"));if(t.contains("current")){CompoundTag cur=t.getCompound("current");summary.putUUID("currentId",cur.getUUID("id"));summary.putString("currentName",cur.getString("name"));}summary.putBoolean("strict",t.contains("current")?t.getCompound("current").getBoolean("strict"):t.getBoolean("strict"));summary.putInt("tint",t.contains("current")?tint(t.getCompound("current")):tint(t));
         summary.putBoolean("currentActive",t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")));
@@ -1269,7 +1279,7 @@ public final class ChronoFactory {
         for(Tag x:saved){CompoundTag tl=(CompoundTag)x,entry=new CompoundTag();boolean running=active(p,key,tl.getUUID("id"));
             entry.putString("name",tl.getString("name"));entry.putUUID("id",tl.getUUID("id"));entry.putInt("repeats",repeats(tl));entry.putBoolean("strict",tl.getBoolean("strict"));entry.putInt("tint",tint(tl));entry.putInt("steps",TimelineStorage.count(tl));entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
         if(summary.getBoolean("currentActive"))count++;
-        summary.putInt("activeCount",count);summary.put("saved",entries);
+        summary.putInt("activeCount",count);if(t.contains("current"))summary.putInt("segments",t.getCompound("current").getInt("parts"));summary.put("saved",entries);
         PlaybackControls.watchStatus(p,key,summary);summary.putBoolean("preview",LaunchPreview.armed(p,key));
         PacketDistributor.sendToPlayer(p,new UiState(key,summary));
     }

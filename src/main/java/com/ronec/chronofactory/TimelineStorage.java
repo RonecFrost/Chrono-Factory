@@ -82,9 +82,28 @@ final class TimelineStorage{
                 else throw new IOException("Unknown timeline stream");
             }
             for(String k:ARRAYS)payload.putIntArray(k,ints.get(k).stream().mapToInt(Integer::intValue).toArray());
-            if(payload.getList("actions",Tag.TAG_COMPOUND).size()!=tl.getInt("actionCount")||payload.getIntArray("raw").length!=tl.getInt("rawTicks")*3||payload.getIntArray("motion").length!=payload.getIntArray("raw").length)throw new IOException("Incomplete timeline");
+            if(payload.getList("actions",Tag.TAG_COMPOUND).size()!=tl.getInt("actionCount")||payload.getIntArray("raw").length!=tl.getInt("rawTicks")*3||tl.getBoolean("strict")&&payload.getIntArray("motion").length!=payload.getIntArray("raw").length)throw new IOException("Incomplete timeline");
             found=attach(tl,payload);cache(server).put(id,found);return found;
         }catch(Exception e){LogUtils.getLogger().error("Chrono Factory failed to load timeline "+id,e);return null;}
+    }
+    static Path checkpointPath(MinecraftServer server,UUID watch){return root(server).resolve("checkpoint_"+watch+".nbt");}
+    static void clearCheckpoint(MinecraftServer server,UUID watch){
+        try{Files.deleteIfExists(checkpointPath(server,watch));}catch(IOException e){LogUtils.getLogger().warn("Could not clear Chrono checkpoint",e);}
+    }
+    static void checkpoint(MinecraftServer server,UUID watch,CompoundTag tl){
+        CompoundTag ref=store(server,tl);if(ref==null)return;
+        Path path=checkpointPath(server,watch),tmp=path.resolveSibling(path.getFileName()+".tmp");
+        try{NbtIo.writeCompressed(ref,tmp);try{Files.move(tmp,path,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}catch(AtomicMoveNotSupportedException e){Files.move(tmp,path,StandardCopyOption.REPLACE_EXISTING);}}
+        catch(IOException e){LogUtils.getLogger().warn("Could not write Chrono checkpoint",e);}
+    }
+    static boolean recover(net.minecraft.server.level.ServerPlayer p,ItemStack s){
+        if(!ChronoFactory.watch(s))return false;
+        UUID watch=ChronoFactory.id(s);Path path=checkpointPath(p.server,watch);if(!Files.isRegularFile(path))return false;
+        try{
+            CompoundTag ref=NbtIo.readCompressed(path,NbtAccounter.create(2L*MAX_PART));if(load(p.server,ref)==null)return false;
+            CompoundTag tag=ChronoFactory.data(s);if(tag.contains("current"))return false;
+            tag.put("current",ref);ChronoFactory.put(s,tag);clearCheckpoint(p.server,watch);return true;
+        }catch(Exception e){LogUtils.getLogger().warn("Could not recover Chrono checkpoint",e);return false;}
     }
     static void migrateWatch(MinecraftServer server,ItemStack s){
         if(!ChronoFactory.watch(s))return;
