@@ -370,7 +370,7 @@ public final class ChronoFactory {
         ItemStack s=find(p,cmd.key());if(s.isEmpty())return;
         CompoundTag t=data(s);Recording r=RECORDINGS.get(p.getUUID());
         if("cycle".equals(cmd.action())){
-            if(p.getMainHandItem()==s)cycle(p);
+            if(p.getMainHandItem()==s){boolean starting=r==null&&!t.contains("current");cycle(p);if(starting&&RECORDINGS.containsKey(p.getUUID()))return;}
         }else if("cancel".equals(cmd.action())){
             if(r!=null&&r.watch.equals(cmd.key()))finish(p,false);
         }else if(r==null){
