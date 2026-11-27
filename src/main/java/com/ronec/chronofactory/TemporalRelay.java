@@ -112,7 +112,7 @@ public final class TemporalRelay {
             boolean signal=l.hasNeighborSignal(worldPosition);
             if(signal!=powered){
                 powered=signal;CompoundTag current=job(l),tl=choice();
-                if(signal){if(current==null&&tl!=null)pending=true;}
+                if(signal){if(tl!=null&&(current==null||(current.getBoolean("dismiss")&&ChronoFactory.repeats(tl)==0)))pending=true;}
                 else if(tl==null||ChronoFactory.repeats(tl)==0){pending=false;if(current!=null&&ChronoFactory.repeats(current.getCompound("timeline"))==0)cancel(l);}
                 setChanged();
             }
