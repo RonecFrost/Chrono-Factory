@@ -19,6 +19,9 @@ final class ItemActions{
         // A block-use event may precede the item fallback in the same tick.
         // Retain only the actual item-use path when the menu did not open.
         MenuTransactions.cancelUnopened(r);
+        // Vanilla may first send use-on-block and then use-in-air. The fallback
+        // is the actual item action; do not replay both as two spell casts.
+        if(!r.gui.isEmpty()){CompoundTag last=r.gui.getCompound(r.gui.size()-1);if("use".equals(last.getString("kind"))&&last.getInt("tick")==r.raw.size()/3)r.gui.remove(r.gui.size()-1);}
         if(r.pendingUse!=null&&r.pendingUse.getInt("recordTick")==r.tick){r.pendingUse=null;r.container=null;}
         if(!r.actions.isEmpty()){
             CompoundTag last=r.actions.getCompound(r.actions.size()-1);
@@ -39,6 +42,30 @@ final class ItemActions{
         var block=ChronoFactory.aimedBlock(f);if(block.getType()!=HitResult.Type.MISS&&eye.distanceToSqr(block.getLocation())<eye.distanceToSqr(hit.getLocation()))return false;
         f.attack(hit.getEntity());return true;
     }
+    static boolean beginInput(ServerLevel l,FakePlayer f,CompoundTag job){
+        if(job.contains("strictHeldTicks"))return true;
+        ItemStack current=f.getMainHandItem();if(current.isEmpty())return false;
+        InteractionResult result=f.gameMode.useItem(f,l,current,InteractionHand.MAIN_HAND);
+        if(result.consumesAction()&&f.isUsingItem()){
+            job.putInt("strictHeldTicks",0);job.putInt("strictHeldSlot",f.getInventory().selected);
+            job.putString("strictHeldItem",net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(f.getMainHandItem().getItem()).toString());
+        }
+        f.stopUsingItem();return result.consumesAction();
+    }
+    static void tickInput(ServerLevel l,FakePlayer f,CompoundTag job,boolean down){
+        if(!job.contains("strictHeldTicks"))return;
+        int slot=job.getInt("strictHeldSlot");ItemStack stack=f.getInventory().getItem(slot);
+        if(slot!=f.getInventory().selected||stack.isEmpty()||!net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().equals(job.getString("strictHeldItem"))){
+            job.remove("strictHeldTicks");job.remove("strictHeldItem");return;
+        }
+        int elapsed=job.getInt("strictHeldTicks"),full=stack.getUseDuration(f),remaining=Math.max(0,full-elapsed);
+        if(down&&remaining>0){elapsed++;remaining--;job.putInt("strictHeldTicks",elapsed);stack.onUseTick(l,f,remaining);}
+        if(!down||remaining==0){
+            if(remaining==0&&!stack.useOnRelease())f.setItemInHand(InteractionHand.MAIN_HAND,stack.finishUsingItem(l,f));
+            else stack.releaseUsing(l,f,remaining);
+            f.stopUsingItem();job.remove("strictHeldTicks");job.remove("strictHeldItem");
+        }
+    }
     static Outcome perform(ServerLevel l,FakePlayer f,CompoundTag job,CompoundTag action){
         ItemStack wanted=ChronoFactory.template(action,l);
         if(!ChronoFactory.equip(f,wanted))return new Outcome(false,false,"Missing required item: "+ChronoFactory.itemName(wanted));
@@ -58,6 +85,7 @@ final class ItemActions{
         if(!job.getBoolean("itemStarted")){
             InteractionResult result=f.gameMode.useItem(f,l,current,InteractionHand.MAIN_HAND);
             if(!result.consumesAction())return new Outcome(false,false,"Cannot begin held item");
+            if(!f.isUsingItem())return new Outcome(true,true,"Used item without charge");
             job.putBoolean("itemStarted",true);
         }
         elapsed++;job.putInt("heldElapsed",elapsed);

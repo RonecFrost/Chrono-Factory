@@ -53,7 +53,9 @@ final class MenuTransactions{
             if(ChronoFactory.carried(f,st)<row.getInt("count"))return new ItemActions.Outcome(false,false,"Missing transaction ingredient: "+ChronoFactory.itemName(st));
         }
         if(f.experienceLevel<action.getInt("levels"))return new ItemActions.Outcome(false,false,"Waiting for XP levels ("+f.experienceLevel+"/"+action.getInt("levels")+")");
-        if(!StrictReplay.recordedUse(l,f,action)||f.containerMenu==f.inventoryMenu){f.closeContainer();return new ItemActions.Outcome(false,false,"Workstation did not open a server menu");}
+        ItemStack held=ChronoFactory.template(action,l);if(!ChronoFactory.equip(f,held))return new ItemActions.Outcome(false,false,"Missing workstation interaction item");
+        CompoundTag use=action.copy();use.putInt("selected",f.getInventory().selected);
+        if(!StrictReplay.recordedUse(l,f,use)||f.containerMenu==f.inventoryMenu){f.closeContainer();return new ItemActions.Outcome(false,false,"Workstation did not open a server menu");}
         AbstractContainerMenu menu=f.containerMenu;
         for(Tag x:action.getList("clicks",Tag.TAG_COMPOUND)){
             CompoundTag click=(CompoundTag)x;

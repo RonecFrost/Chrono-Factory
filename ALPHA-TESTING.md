@@ -70,3 +70,5 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Optional Ars bridge matches spellbooks by item/tier, records changed spell slots from server book metadata, edits only those slots, and casts the current spell in recorded slot. Mana uses Ars API where available; no hard dependency. No guarantee of every glyph, add-on, or fake-player compatibility. Main hand only. Re-record.
 - Adaptive generic server-menu transactions with no exposed storage record net ingredients/results/XP and attempt native menu clicks with item matching; actual output is computed by workstation. Enchanting random offers can vary. Custom client-only GUIs (including Rechiseled) and non-inventory resource costs require specific adapters. Persistent inventories still use storage transfers. No arbitrary delta-to-item generation.
 - Test in disposable world; compile does not establish gameplay compatibility.
+
+- Input air-use holds now track elapsed charge ticks separately from the fake player's transient item stack; release uses real current stack. Actual entity attack events are captured. These combat paths remain experimental.

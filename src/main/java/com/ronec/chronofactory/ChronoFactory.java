@@ -327,7 +327,7 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.remove(p.getUUID());if(r==null){restore(p);return;}
         if(r.menuSeen&&r.container!=null)captureTransfers(p,r);
         else if(r.pendingUse!=null)r.add(r.pendingUse);
-        r.closeUse(r.tick);ItemActions.close(r);
+        ArsSupport.observe(p,r);r.closeUse(r.tick);ItemActions.close(r);
         if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
         MenuTransactions.finish(p,r);
         r.move(p);
@@ -385,6 +385,7 @@ public final class ChronoFactory {
         if(e.isCanceled()||!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||watch(p.getMainHandItem()))return;
         r.move(p);CompoundTag a=point(p,"attack_entity");ItemStack st=p.getMainHandItem();if(!st.isEmpty())a.put("item",st.copyWithCount(1).save(p.registryAccess()));r.add(a);
+        if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","attack_entity");raw.putInt("tick",r.raw.size()/3);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
     }
     static void toss(ItemTossEvent e){
         if(!(e.getPlayer() instanceof ServerPlayer p)||p instanceof FakePlayer||e.isCanceled())return;
@@ -554,7 +555,7 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||e.getHand()!=InteractionHand.MAIN_HAND)return;
         if(r.container!=null&&r.menuSeen&&p.containerMenu==p.inventoryMenu){captureTransfers(p,r);r.container=null;r.menuSeen=false;r.pendingUse=null;}
         r.move(p);BlockPos pos=e.getPos();
-        CompoundTag a=point(p,"use");a.putInt("recordTick",r.tick);a.putInt("holdId",r.useDown?r.useEpoch:0);a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
+        CompoundTag a=point(p,"use");a.putInt("recordTick",r.tick);a.putInt("holdId",r.useDown?r.useEpoch:0);a.putInt("selected",p.getInventory().selected);a.putInt("spellSlot",ArsSupport.slot(e.getItemStack()));a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
         BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));
         if(r.gui.size()<4096){CompoundTag input=a.copy();input.putString("kind","use");input.putInt("tick",r.raw.size()/3);input.putInt("selected",p.getInventory().selected);r.gui.add(input);}
         MenuTransactions.finish(p,r);
@@ -1034,6 +1035,7 @@ public final class ChronoFactory {
                     else if(!equip(f,wanted)){advance=false;reason="Missing required item: "+itemName(wanted);}
                     else{
                         f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+                        if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),action.getInt("spellSlot"));
                         InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));
                         if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
                         if(result.consumesAction()){a.putInt("useCursor",++cursor);swung=true;}
@@ -1071,7 +1073,7 @@ public final class ChronoFactory {
             }
         }
         if(!strict&&"wait".equals(type))sweepItems(f,l,here);
-        ItemActions.collectXp(f,l);ItemActions.saveXp(f,a);
+        ItemActions.collectXp(f,l);ItemActions.saveXp(f,a);ArsSupport.saveMana(f,a);
         if(!"air_swing".equals(type)&&!"move".equals(type)){a.remove("sweepPos");a.remove("sweepProgress");}
         if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("itemStarted");a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);

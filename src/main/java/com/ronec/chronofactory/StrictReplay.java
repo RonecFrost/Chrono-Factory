@@ -48,7 +48,7 @@ public final class StrictReplay {
     static void finishCycle(MacroPlayer f,CompoundTag a){
         f.closeContainer();f.inventoryMenu.removed(f);ItemStack cursor=f.inventoryMenu.getCarried();f.inventoryMenu.setCarried(ItemStack.EMPTY);
         if(!cursor.isEmpty()){f.getInventory().add(cursor);if(!cursor.isEmpty())f.drop(cursor,false);}a.remove("strictCursor");
-        f.stopUsingItem();a.remove("itemStarted");a.remove("strictVx");a.remove("strictVy");a.remove("strictVz");a.remove("strictUseDelay");a.remove("strictMinePos");a.remove("strictMineProgress");a.remove("strictAttackDelay");a.remove("strictFlags");
+        f.stopUsingItem();a.remove("strictHeldTicks");a.remove("strictHeldItem");a.remove("itemStarted");a.remove("strictVx");a.remove("strictVy");a.remove("strictVz");a.remove("strictUseDelay");a.remove("strictMinePos");a.remove("strictMineProgress");a.remove("strictAttackDelay");a.remove("strictFlags");
     }
     static void forget(MacroPlayer f,CompoundTag a){finishCycle(f,a);PLAYERS.remove(f.getUUID());}
     static void clickGui(MacroPlayer f,CompoundTag event){
@@ -66,7 +66,7 @@ public final class StrictReplay {
     static boolean recordedUse(ServerLevel l,MacroPlayer f,CompoundTag event){
         if(f.containerMenu!=f.inventoryMenu)return false;
         f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));
-        f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));f.setShiftKeyDown(event.getBoolean("sneak"));
+        f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));if(ArsSupport.book(f.getMainHandItem())&&event.contains("spellSlot"))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));f.setShiftKeyDown(event.getBoolean("sneak"));
         BlockHitResult hit=ChronoFactory.aimedBlock(f);
         // A tiny difference in frame timing can miss a chest edge. Only recover
         // the recorded hit when the Echo is still at the demonstrated position
@@ -107,7 +107,7 @@ public final class StrictReplay {
         // is always relative to the actual resulting position.
         if(l.hasChunkAt(BlockPos.containing(here.add(desired))))f.move(MoverType.SELF,desired);
         Vec3 actual=f.position().subtract(here);
-        boolean swung=false,hadRecordedUse=false;String task="Idle";
+        boolean swung=false,hadRecordedUse=false,hadRecordedAttack=false;String task="Idle";
         // Record actual server interaction events and GUI clicks in one ordered
         // stream. This avoids relying on a held-key frame to open a chest.
         ListTag gui=tl.getList("gui",Tag.TAG_COMPOUND);int cursor=a.getInt("guiIndex");
@@ -115,7 +115,8 @@ public final class StrictReplay {
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
             CompoundTag event=gui.getCompound(cursor++);
             if("ars_edit".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ArsSupport.edit(f.getMainHandItem(),event,l);task="Configure spell";}
-            else if("item_use".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND);hadRecordedUse=true;delay=4;swung=true;task="Use item";}
+            else if("attack_entity".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));ItemActions.attack(f);hadRecordedAttack=true;swung=true;task="Attack entity";}
+            else if("item_use".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));f.setYRot(event.getFloat("yaw"));f.setXRot(event.getFloat("pitch"));if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),event.getInt("spellSlot"));ItemActions.beginInput(l,f,a);hadRecordedUse=true;delay=4;swung=true;task="Use item";}
             else if("button".equals(event.getString("kind"))){if(f.containerMenu!=f.inventoryMenu&&f.containerMenu.stillValid(f))f.containerMenu.clickMenuButton(f,event.getInt("button"));task="Select recipe";}
             else if("use".equals(event.getString("kind"))){recordedUse(l,f,event);hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
             else{clickGui(f,event);task=event.getBoolean("close")?"Close inventory":"Click slot "+event.getInt("slot");}
@@ -123,14 +124,14 @@ public final class StrictReplay {
         a.putInt("guiIndex",cursor);
         // Continue held input even when recorded events were absent, but do
         // not double-fire an actual captured click.
-        if(!hadRecordedUse&&(flags&USE)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu&&delay==0){
+        if(!hadRecordedUse&&(flags&USE)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu&&delay==0&&!a.contains("strictHeldTicks")){
             f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);
             BlockHitResult hit=ChronoFactory.aimedBlock(f);InteractionResult result=InteractionResult.PASS;
             if(hit.getType()!=HitResult.Type.MISS&&l.hasChunkAt(hit.getBlockPos()))result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,hit);
-            if(!result.consumesAction()&&!f.getMainHandItem().isEmpty()&&f.containerMenu==f.inventoryMenu)f.gameMode.useItem(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND);
+            if(!result.consumesAction()&&!f.getMainHandItem().isEmpty()&&f.containerMenu==f.inventoryMenu)ItemActions.beginInput(l,f,a);
             delay=4;swung=true;task="Holding right-click";
         }
-        if((flags&USE)==0&&!hadRecordedUse){delay=0;if(f.isUsingItem())f.releaseUsingItem();}
+        ItemActions.tickInput(l,f,a,((flags&USE)!=0||hadRecordedUse)&&(flags&SCREEN)==0);if((flags&USE)==0&&!hadRecordedUse){delay=0;}
         a.putInt("strictUseDelay",delay);
         f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);
         int attackDelay=Math.max(0,a.getInt("strictAttackDelay")-1);
@@ -142,7 +143,7 @@ public final class StrictReplay {
                 if(!a.contains("strictMinePos")||a.getLong("strictMinePos")!=pos.asLong()){a.putLong("strictMinePos",pos.asLong());a.putFloat("strictMineProgress",0);}
                 float progress=a.getFloat("strictMineProgress")+state.getDestroyProgress(f,l,pos);a.putFloat("strictMineProgress",progress);
                 if(progress>=1){f.gameMode.destroyBlock(pos);a.remove("strictMinePos");a.remove("strictMineProgress");attackDelay=5;}
-            }else if(hit.getType()==HitResult.Type.MISS){a.remove("strictMinePos");a.remove("strictMineProgress");if(attackDelay==0&&ItemActions.attack(f))attackDelay=10;}
+            }else if(hit.getType()==HitResult.Type.MISS){a.remove("strictMinePos");a.remove("strictMineProgress");if(!hadRecordedAttack&&attackDelay==0&&ItemActions.attack(f))attackDelay=10;}
         }else{a.remove("strictMinePos");a.remove("strictMineProgress");}
         a.putInt("strictAttackDelay",attackDelay);
         if((flags&DROP)!=0&&(previous&DROP)==0&&!f.getMainHandItem().isEmpty())f.drop(f.getMainHandItem().split(1),false);
