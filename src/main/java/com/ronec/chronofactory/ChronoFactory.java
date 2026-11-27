@@ -4,6 +4,7 @@ import java.util.*;
 import com.mojang.authlib.GameProfile;
 import net.minecraft.core.*;
 import net.minecraft.core.component.DataComponents;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.core.registries.Registries;
 import net.neoforged.neoforge.event.entity.EntityAttributeCreationEvent;
 import net.minecraft.core.particles.DustParticleOptions;
@@ -158,6 +159,9 @@ public final class ChronoFactory {
         CompoundTag last;
         BlockPos container;
         Map<String,ItemStack> previous=new HashMap<>();
+        List<ItemStack> containerBefore=new ArrayList<>();
+        CompoundTag pendingUse;
+        int bulkStart=-1;
         boolean menuSeen;
         int tick,lastMoveTick;
         Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);}
@@ -188,12 +192,13 @@ public final class ChronoFactory {
     static void finish(ServerPlayer p,boolean save){
         Recording r=RECORDINGS.remove(p.getUUID());if(r==null){restore(p);return;}
         if(r.menuSeen&&r.container!=null)captureTransfers(p,r);
+        else if(r.pendingUse!=null)r.add(r.pendingUse);
         if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
         r.move(p);
         ItemStack s=find(p,r.watch);
         if(save&&!s.isEmpty()){
             if(r.actions.size()==1){CompoundTag idle=point(p,"wait");idle.putInt("ticks",Math.max(1,Math.min(1200,r.tick)));r.add(idle);}
-            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putBoolean("explicitPickup",true);tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
+            CompoundTag t=data(s),tl=new CompoundTag();tl.putUUID("id",UUID.randomUUID());tl.putString("name","Timeline "+(t.getList("saved",Tag.TAG_COMPOUND).size()+1));tl.putString("dimension",r.dimension);tl.put("actions",r.actions);tl.putBoolean("explicitPickup",true);tl.putBoolean("strict",t.getBoolean("strict"));tl.putInt("tint",tint(t));t.put("current",tl);put(s,t);
         }
         restore(p);say(p,save&&!s.isEmpty()?"RECORDING SAVED ("+r.actions.size()+" steps). Left-click to summon the Echo.":"Recording cancelled; inventory restored.");
     }
@@ -235,20 +240,60 @@ public final class ChronoFactory {
         for(int i=0;i<36;i++){ItemStack s=p.getInventory().getItem(i);if(s.isEmpty()||watch(s))continue;String k=itemKey(s);if(map.containsKey(k))map.get(k).grow(s.getCount());else map.put(k,s.copy());}
         return map;
     }
+    static List<ItemStack> slotSnapshot(IItemHandler h){
+        List<ItemStack> slots=new ArrayList<>();if(h!=null)for(int i=0;i<h.getSlots();i++)slots.add(h.getStackInSlot(i).copy());return slots;
+    }
+    static int matchingCount(ItemStack stack,ItemStack wanted){return matches(stack,wanted)?stack.getCount():0;}
+    static void recordTransfer(ServerPlayer p,Recording r,ItemStack item,int count,boolean take,int slot){
+        CompoundTag a=point(p,"transfer");a.putLong("pos",r.container.asLong());a.putBoolean("take",take);a.putInt("count",count);a.putInt("slot",slot);a.put("item",item.copyWithCount(1).save(p.registryAccess()));
+        if(take)r.bulkStart=-1;else if(r.bulkStart<0)r.bulkStart=r.actions.size();
+        r.add(a);
+    }
     static void captureTransfers(ServerPlayer p,Recording r){
         Map<String,ItemStack> now=snapshot(p);Set<String> keys=new TreeSet<>(now.keySet());keys.addAll(r.previous.keySet());
-        for(String k:keys){ItemStack before=r.previous.getOrDefault(k,ItemStack.EMPTY),after=now.getOrDefault(k,ItemStack.EMPTY);int delta=after.getCount()-before.getCount();if(delta==0)continue;
-            CompoundTag a=point(p,"transfer");a.putLong("pos",r.container.asLong());a.putBoolean("take",delta>0);a.putInt("count",Math.abs(delta));a.put("item",(delta>0?after:before).copyWithCount(1).save(p.registryAccess()));r.add(a);}
+        IItemHandler h=handler(p.serverLevel(),r.container);
+        List<ItemStack> current=slotSnapshot(h);
+        // Compare real inventory deltas with the storage's changed slots. Preserve pending
+        // slot differences until an item reaches the player's inventory (cursor clicks).
+        boolean changed=false;
+        // Deposit before withdrawal if both changed in one tick, preserving swap semantics.
+        for(boolean take:new boolean[]{false,true})for(String k:keys){
+            ItemStack before=r.previous.getOrDefault(k,ItemStack.EMPTY),after=now.getOrDefault(k,ItemStack.EMPTY);
+            int delta=after.getCount()-before.getCount();if(delta==0||(delta>0)!=take)continue;
+            changed=true;ItemStack item=take?after:before;int left=Math.abs(delta);
+            for(int slot=0;slot<Math.min(current.size(),r.containerBefore.size())&&left>0;slot++){
+                ItemStack old=r.containerBefore.get(slot),cur=current.get(slot);
+                int difference=take?matchingCount(old,item)-matchingCount(cur,item):matchingCount(cur,item)-matchingCount(old,item);
+                if(difference<=0)continue;int n=Math.min(left,difference);
+                recordTransfer(p,r,item,n,take,slot);left-=n;
+                if(take){ItemStack adjusted=old.copy();adjusted.shrink(n);r.containerBefore.set(slot,adjusted);}
+                else{ItemStack adjusted=cur.copyWithCount(matchingCount(old,item)+n);r.containerBefore.set(slot,adjusted);}
+            }
+            if(left>0)recordTransfer(p,r,item,left,take,-1);
+        }
+        if(changed&&now.isEmpty()&&r.bulkStart>=0&&r.bulkStart<r.actions.size()){
+            // Keep original transfers for strict playback. In parallel playback, replace
+            // the demonstrated complete emptying of inventory with a physical deposit-all.
+            boolean valid=true;for(int i=r.bulkStart;i<r.actions.size();i++){CompoundTag a=r.actions.getCompound(i);if(!"transfer".equals(a.getString("type"))||a.getBoolean("take")||a.getLong("pos")!=r.container.asLong()){valid=false;break;}}
+            if(valid){r.actions.getCompound(r.bulkStart).putBoolean("bulkStart",true);for(int i=r.bulkStart+1;i<r.actions.size();i++)r.actions.getCompound(i).putBoolean("bulkSkip",true);}
+            r.bulkStart=-1;
+        }
         r.previous=now;
     }
     static IItemHandler handler(ServerLevel l,BlockPos pos){return l.getCapability(Capabilities.ItemHandler.BLOCK,pos,null);}
     static void onUse(PlayerInteractEvent.RightClickBlock e){
-        if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||watch(e.getItemStack()))return;
+        if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||watch(e.getItemStack())||e.isCanceled())return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||e.getHand()!=InteractionHand.MAIN_HAND)return;
         r.move(p);BlockPos pos=e.getPos();
-        if(handler(p.serverLevel(),pos)!=null&&!p.isShiftKeyDown()&&e.getItemStack().isEmpty()){r.container=pos.immutable();r.previous=snapshot(p);r.menuSeen=false;return;}
         CompoundTag a=point(p,"use");a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
-        BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));r.add(a);
+        BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));
+        IItemHandler inventory=handler(p.serverLevel(),pos);
+        if(inventory!=null&&!p.isShiftKeyDown()){
+            // A chest can be opened while holding an item. Wait until we know whether
+            // the interaction opened a menu or was a normal right-click on the machine.
+            r.container=pos.immutable();r.previous=snapshot(p);r.containerBefore=slotSnapshot(inventory);r.menuSeen=false;r.pendingUse=a;r.bulkStart=-1;return;
+        }
+        r.add(a);
     }
     static void onBreak(BlockEvent.BreakEvent e){
         if(!(e.getPlayer() instanceof ServerPlayer p)||p instanceof FakePlayer||e.isCanceled())return;
@@ -260,8 +305,13 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.get(p.getUUID());
         if(r!=null){
             if(!r.dimension.equals(p.level().dimension().location().toString())||find(p,r.watch).isEmpty()){finish(p,false);return;}
-            if(r.container!=null){if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;captureTransfers(p,r);}else if(r.menuSeen){captureTransfers(p,r);r.container=null;r.menuSeen=false;}}
-            if(++r.tick%3==0&&p.containerMenu==p.inventoryMenu)r.move(p);
+            if(r.container!=null){
+                if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;captureTransfers(p,r);}
+                else if(r.menuSeen){captureTransfers(p,r);r.container=null;r.menuSeen=false;r.bulkStart=-1;}
+                else if(r.pendingUse!=null){r.add(r.pendingUse);r.pendingUse=null;r.container=null;r.bulkStart=-1;}
+            }
+            // Sample every tick in the air, retaining the recorded jump arc and ledge descent.
+            if(++r.tick%3==0||!p.onGround()||Math.abs(p.getY()-r.last.getDouble("y"))>.015){if(p.containerMenu==p.inventoryMenu)r.move(p);}
             if(r.tick==2){p.inventoryMenu.sendAllDataToRemote();}
             if(r.actions.size()>=MAX_ACTIONS)finish(p,true);
         }
@@ -291,21 +341,68 @@ public final class ChronoFactory {
         if(wanted.isEmpty()){for(int i=0;i<36;i++)if(f.getInventory().getItem(i).isEmpty()){if(i!=0){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(i,old);f.getInventory().setItem(0,ItemStack.EMPTY);}f.getInventory().selected=0;return true;}return false;}
         for(int i=0;i<36;i++)if(matches(f.getInventory().getItem(i),wanted)){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(0,f.getInventory().getItem(i));f.getInventory().setItem(i,old);f.getInventory().selected=0;return true;}return false;
     }
-    static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take){
+    static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take){return transfer(f,h,wanted,n,take,-1);}
+    static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take,int exactSlot){
         int initial=n;
-        if(h==null||wanted.isEmpty())return 0;
+        if(h==null||wanted.isEmpty()||n<=0||exactSlot>=h.getSlots())return 0;
+        int first=exactSlot>=0?exactSlot:0,last=exactSlot>=0?exactSlot+1:h.getSlots();
         Inventory inv=f.getInventory();
         if(take){
             int available=0,space=0;
-            for(int i=0;i<h.getSlots();i++){ItemStack s=h.getStackInSlot(i);if(matches(s,wanted))available+=h.extractItem(i,n,true).getCount();}
+            for(int i=first;i<last;i++){ItemStack s=h.getStackInSlot(i);if(matches(s,wanted))available+=h.extractItem(i,n,true).getCount();}
             for(int i=0;i<36;i++){ItemStack s=inv.getItem(i);if(s.isEmpty())space+=wanted.getMaxStackSize();else if(ItemStack.isSameItemSameComponents(s,wanted))space+=Math.max(0,s.getMaxStackSize()-s.getCount());}
             if(available<n||space<n)return 0;
-            for(int i=0;i<h.getSlots()&&n>0;i++){if(!matches(h.getStackInSlot(i),wanted))continue;ItemStack s=h.extractItem(i,n,false);int got=s.getCount();inv.add(s);if(!s.isEmpty())f.drop(s,false);n-=got;}return initial-n;
+            for(int i=first;i<last&&n>0;i++){if(!matches(h.getStackInSlot(i),wanted))continue;ItemStack s=h.extractItem(i,n,false);int got=s.getCount();inv.add(s);if(!s.isEmpty())f.drop(s,false);n-=got;}return initial-n;
         }
         int available=0;for(int i=0;i<36;i++)if(matches(inv.getItem(i),wanted))available+=inv.getItem(i).getCount();if(available<n)return 0;
         // Insert only actual stacks, preserving durability and components. Partial transfers track remaining count.
-        for(int i=0;i<36&&n>0;i++){ItemStack s=inv.getItem(i);if(!matches(s,wanted))continue;int want=Math.min(n,s.getCount());ItemStack pending=s.copyWithCount(want);for(int j=0;j<h.getSlots()&&!pending.isEmpty();j++)pending=h.insertItem(j,pending,false);int moved=want-pending.getCount();s.shrink(moved);n-=moved;}
+        for(int i=0;i<36&&n>0;i++){ItemStack s=inv.getItem(i);if(!matches(s,wanted))continue;int want=Math.min(n,s.getCount());ItemStack pending=s.copyWithCount(want);for(int j=first;j<last&&!pending.isEmpty();j++)pending=h.insertItem(j,pending,false);int moved=want-pending.getCount();s.shrink(moved);n-=moved;}
         return initial-n;
+    }
+    static int carried(FakePlayer f,ItemStack wanted){
+        int count=0;for(int i=0;i<36;i++){ItemStack st=f.getInventory().getItem(i);if(matches(st,wanted))count+=st.getCount();}return count;
+    }
+    static int depositAll(FakePlayer f,IItemHandler h){
+        int left=0;for(int i=0;i<36;i++){ItemStack st=f.getInventory().getItem(i);if(st.isEmpty())continue;
+            ItemStack remainder=st.copy();if(h!=null)for(int j=0;j<h.getSlots()&&!remainder.isEmpty();j++)remainder=h.insertItem(j,remainder,false);
+            st.shrink(st.getCount()-remainder.getCount());left+=st.getCount();
+        }return left;
+    }
+    static void sweepItems(FakePlayer f,ServerLevel l,Vec3 here){
+        f.setPos(here.x,here.y,here.z);
+        for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,f.getBoundingBox().inflate(.65,.35,.65),it->!it.hasPickUpDelay()&&!watch(it.getItem()))){
+            ItemStack stack=e.getItem(),part=stack.copy();int before=part.getCount();f.getInventory().add(part);int moved=before-part.getCount();
+            if(moved>0){stack.shrink(moved);if(stack.isEmpty())e.discard();else e.setItem(stack.copy());}
+        }
+    }
+    static boolean clearSegment(ServerLevel l,FakePlayer f,Vec3 from,Vec3 to){
+        Vec3 delta=to.subtract(from);int steps=Math.max(1,(int)Math.ceil(delta.length()/.08));
+        // Tiny shrink only removes floating-point contacts with the supporting face.
+        AABB box=new AABB(from.x-.299,from.y+.002,from.z-.299,from.x+.299,from.y+(f.isShiftKeyDown()?1.49:1.798),from.z+.299);
+        for(int i=1;i<=steps;i++){
+            AABB moved=box.move(delta.scale((double)i/steps));
+            if(l.getBlockCollisions(f,moved).iterator().hasNext())return false;
+        }return true;
+    }
+    static boolean routeClear(ServerLevel l,FakePlayer f,Vec3 here,Vec3 next){
+        if(clearSegment(l,f,here,next))return true;
+        // A recorded jump can cut the corner of a ledge between samples.
+        // Validate both legs of a small axis-ordered path; never teleport through a solid block.
+        Vec3 vertical=new Vec3(here.x,next.y,here.z),horizontal=new Vec3(next.x,here.y,next.z);
+        if(Math.abs(next.y-here.y)>.001){
+            if(next.y>here.y&&clearSegment(l,f,here,vertical)&&clearSegment(l,f,vertical,next))return true;
+            if(next.y<here.y&&clearSegment(l,f,here,horizontal)&&clearSegment(l,f,horizontal,next))return true;
+        }
+        Vec3 xFirst=new Vec3(next.x,here.y,here.z),zFirst=new Vec3(here.x,here.y,next.z);
+        return (clearSegment(l,f,here,xFirst)&&clearSegment(l,f,xFirst,next))||(clearSegment(l,f,here,zFirst)&&clearSegment(l,f,zFirst,next));
+    }
+    static boolean saplingNear(ServerLevel l,BlockPos pos){
+        for(int dy=0;dy<=3;dy++)if(l.getBlockState(pos.below(dy)).is(BlockTags.SAPLINGS))return true;return false;
+    }
+    static boolean firstLog(ListTag actions,int index,ServerLevel l){
+        for(int i=0;i<index;i++){CompoundTag prev=actions.getCompound(i);if(!"break".equals(prev.getString("type")))continue;
+            var id=ResourceLocation.tryParse(prev.getString("block"));if(id!=null&&net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(id).defaultBlockState().is(BlockTags.LOGS))return false;
+        }return true;
     }
     static void collect(FakePlayer f,ServerLevel l,BlockPos pos){for(ItemEntity e:l.getEntitiesOfClass(ItemEntity.class,new AABB(pos).inflate(1.2))){ItemStack s=e.getItem();if(f.getInventory().add(s)&&s.isEmpty())e.discard();else e.setItem(s);}}
     static void describe(ServerPlayer p,EchoEntity entity){
@@ -314,7 +411,8 @@ public final class ChronoFactory {
             if(!a.getUUID("id").equals(entity.loopId()))continue;
             ListTag actions=timeline(a.getCompound("timeline"));int i=a.getInt("index");
             String action=i>=0&&i<actions.size()?actions.getCompound(i).getString("type"):"transition";
-            p.sendSystemMessage(Component.literal("[Chrono] "+a.getCompound("timeline").getString("name")+" | Cycle "+(a.getInt("cycles")+1)+" | Step "+Math.min(i+1,actions.size())+"/"+actions.size()+" ("+action+")"));
+            if(i>=0&&i<actions.size()&&actions.getCompound(i).getBoolean("bulkStart")&&!a.getCompound("timeline").getBoolean("strict"))action="deposit all";
+            p.sendSystemMessage(Component.literal("[Chrono] "+a.getCompound("timeline").getString("name")+" | "+(a.getCompound("timeline").getBoolean("strict")?"Strict":"Parallel")+" | Cycle "+(a.getInt("cycles")+1)+" | Step "+Math.min(i+1,actions.size())+"/"+actions.size()+" ("+action+")"));
             p.sendSystemMessage(Component.literal("Status: "+(a.getString("reason").isEmpty()?"Running":a.getString("reason"))));
             ListTag inv=a.getList("inventory",Tag.TAG_COMPOUND);StringJoiner items=new StringJoiner(", ");
             for(Tag it:inv){ItemStack st=ItemStack.parseOptional(p.registryAccess(),(CompoundTag)it);if(!st.isEmpty())items.add(st.getCount()+" x "+st.getHoverName().getString());}
@@ -373,7 +471,7 @@ public final class ChronoFactory {
             f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
         if(owner==null||watch.isEmpty()){a.putString("reason","Owner or Timekeeper unavailable");f.getInventory().clearContent();return false;}
-        CompoundTag tl=a.getCompound("timeline");ListTag actions=timeline(tl);if(actions.isEmpty()){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
+        CompoundTag tl=a.getCompound("timeline");boolean strict=tl.getBoolean("strict");ListTag actions=timeline(tl);if(actions.isEmpty()){a.putBoolean("dismiss",true);f.getInventory().clearContent();return false;}
         int color=tint(tl);
         // At the end of a timeline, fade out and reappear at the initial position.
         // Logical inventory belongs to the loop and is never regenerated by visual remanifestation.
@@ -424,7 +522,7 @@ public final class ChronoFactory {
                 double speed=a.getDouble("segmentSpeed");double travel=Math.min(distance,speed*time);
                 Vec3 next=distance<1e-6?goal:here.add(diff.scale(travel/distance));
                 f.setPos(here.x,here.y,here.z);
-                if(l.getBlockCollisions(f,f.getBoundingBox().move(next.subtract(here))).iterator().hasNext()){
+                if(!routeClear(l,f,here,next)){
                     done=false;reason="Route obstructed near "+coords(BlockPos.containing(next));break;
                 }
                 float fraction=distance<1e-6?1f:(float)(travel/distance);
@@ -433,6 +531,7 @@ public final class ChronoFactory {
                 position=waypoint.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);
                 position.putFloat("yaw",yaw);position.putFloat("pitch",pitch);a.put("position",position);
                 walking|=next.distanceTo(here)>.002;here=next;working=true;reason="Following recorded route";
+                if(!strict)sweepItems(f,l,here);
                 done=distance-travel<1e-5;
                 time-=travel/speed;
                 if(!done||time<1e-5||index+1>=actions.size()||!"move".equals(actions.getCompound(index+1).getString("type")))break;
@@ -440,25 +539,45 @@ public final class ChronoFactory {
             }
         }else if("drop".equals(type)||"pickup".equals(type)){
             int count=action.getInt("count"),remaining=count-a.getInt("transferred");
+            if(!strict&&"pickup".equals(type)){sweepItems(f,l,here);done=true;working=true;reason="Collected available nearby drops";}
+            else{
             int moved="drop".equals(type)?groundDrop(f,wanted,remaining,action):groundPickup(f,l,wanted,remaining,action);
             a.putInt("transferred",a.getInt("transferred")+moved);done=a.getInt("transferred")>=count;working=moved>0;
             reason="drop".equals(type)?"Missing "+(count-a.getInt("transferred"))+" x "+itemName(wanted)+" to drop":"Waiting for "+(count-a.getInt("transferred"))+" x "+itemName(wanted)+" on the ground, or free inventory space";
             swung=moved>0;
+            }
         }else{
             BlockPos pos=BlockPos.of(action.getLong("pos"));
             if(!l.hasChunkAt(pos))reason="Target chunk is not loaded";
             else if(here.distanceToSqr(Vec3.atCenterOf(pos))>36)reason="Target out of reach at "+coords(pos);
             else if("transfer".equals(type)){
                 IItemHandler h=handler(l,pos);
-                int n=action.getInt("count")-a.getInt("transferred");
-                int moved=transfer(f,h,wanted,n,action.getBoolean("take"));a.putInt("transferred",a.getInt("transferred")+moved);
-                done=a.getInt("transferred")>=action.getInt("count");working=moved>0;
-                reason=h==null?"No accessible inventory at "+coords(pos):action.getBoolean("take")?"Waiting to withdraw "+(action.getInt("count")-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+coords(pos):"Waiting to deposit "+(action.getInt("count")-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+coords(pos)+" (missing items or destination full)";
+                if(h==null)reason="No accessible inventory at "+coords(pos);
+                else if(!strict&&action.getBoolean("bulkSkip")){done=true;reason="Already deposited inventory";}
+                else if(!strict&&action.getBoolean("bulkStart")){
+                    int before=0;for(int slot=0;slot<36;slot++)before+=f.getInventory().getItem(slot).getCount();
+                    int left=depositAll(f,h);done=left==0;working=left<before;reason="Destination full or rejects "+left+" carried items at "+coords(pos);
+                }else{
+                    boolean take=action.getBoolean("take");int expected=action.getInt("count");
+                    int slot=strict&&action.contains("slot")?action.getInt("slot"):-1;
+                    int n=expected-a.getInt("transferred");
+                    if(!strict&&!take)n=Math.min(n,carried(f,wanted));
+                    int moved=transfer(f,h,wanted,n,take,slot);a.putInt("transferred",a.getInt("transferred")+moved);
+                    done=a.getInt("transferred")>=expected||(!strict&&!take&&carried(f,wanted)==0);working=moved>0;
+                    String where=coords(pos)+(slot>=0?" slot "+(slot+1):"");
+                    reason=take?"Waiting to withdraw "+(expected-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+where:"Waiting to deposit "+itemName(wanted)+" at "+where+" (missing items or destination full)";
+                }
+            }else if(!strict&&"break".equals(type)&&l.getBlockState(pos).isAir()){
+                if(firstLog(actions,index,l)&&saplingNear(l,pos))reason="Waiting for sapling to grow at "+coords(pos);
+                else{done=true;working=true;swung=true;reason="Swing at empty space";}
+            }else if(!strict&&"break".equals(type)&&l.getBlockState(pos).is(BlockTags.SAPLINGS)){
+                if(firstLog(actions,index,l))reason="Waiting for sapling to grow at "+coords(pos);
+                else{done=true;reason="Preserving sapling";}
             }else if(!equip(f,wanted))reason="Missing required item: "+itemName(wanted);
             else{
                 f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
                 BlockState state=l.getBlockState(pos);String block=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                if(!block.equals(action.getString("block")))reason="Expected "+action.getString("block")+" at "+coords(pos)+", found "+block;
+                if(!block.equals(action.getString("block"))&&(strict||!"break".equals(type)))reason="Expected "+action.getString("block")+" at "+coords(pos)+", found "+block;
                 else if("break".equals(type)){
                     float progress=a.getFloat("progress")+state.getDestroyProgress(f,l,pos);a.putFloat("progress",progress);working=progress>0;swung=working;
                     reason="Mining "+block+" at "+coords(pos)+" ("+Math.min(100,(int)(progress*100))+"%)";
@@ -470,6 +589,7 @@ public final class ChronoFactory {
                 }else reason="Unsupported action: "+type;
             }
         }
+        if(!strict&&"wait".equals(type))sweepItems(f,l,here);
         if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);
         double moved=echo.position().distanceTo(here);
@@ -492,12 +612,12 @@ public final class ChronoFactory {
         summary.putBoolean("creative",creative(s));summary.putBoolean("retain",t.getBoolean("retain"));summary.putInt("energy",energy(s));
         summary.putBoolean("recording",recording);summary.putBoolean("otherRecording",rec!=null&&!recording);
         summary.putInt("steps",recording?rec.actions.size():t.contains("current")?timeline(t.getCompound("current")).size():0);
-        summary.putBoolean("current",t.contains("current"));summary.putInt("tint",t.contains("current")?tint(t.getCompound("current")):tint(t));
+        summary.putBoolean("current",t.contains("current"));summary.putBoolean("strict",t.contains("current")?t.getCompound("current").getBoolean("strict"):t.getBoolean("strict"));summary.putInt("tint",t.contains("current")?tint(t.getCompound("current")):tint(t));
         summary.putBoolean("currentActive",t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")));
         ListTag entries=new ListTag(), saved=t.getList("saved",Tag.TAG_COMPOUND);
         int count=0;
         for(Tag x:saved){CompoundTag tl=(CompoundTag)x,entry=new CompoundTag();boolean running=active(p,key,tl.getUUID("id"));
-            entry.putString("name",tl.getString("name"));entry.putInt("tint",tint(tl));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
+            entry.putString("name",tl.getString("name"));entry.putBoolean("strict",tl.getBoolean("strict"));entry.putInt("tint",tint(tl));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
         if(summary.getBoolean("currentActive"))count++;
         summary.putInt("activeCount",count);summary.put("saved",entries);
         PacketDistributor.sendToPlayer(p,new UiState(key,summary));
@@ -513,6 +633,15 @@ public final class ChronoFactory {
         }else if(r==null){
             ListTag saved=t.getList("saved",Tag.TAG_COMPOUND);int i=cmd.index();
             switch(cmd.action()){
+                case "mode" -> {
+                    if(i==-1){
+                        if(t.contains("current")){
+                            CompoundTag tl=t.getCompound("current");if(!active(p,cmd.key(),tl.getUUID("id"))){tl.putBoolean("strict",!tl.getBoolean("strict"));t.put("current",tl);put(s,t);}
+                        }else{t.putBoolean("strict",!t.getBoolean("strict"));put(s,t);}
+                    }else if(creative(s)&&i>=0&&i<saved.size()){
+                        CompoundTag tl=saved.getCompound(i);if(!active(p,cmd.key(),tl.getUUID("id"))){tl.putBoolean("strict",!tl.getBoolean("strict"));t.put("saved",saved);put(s,t);}
+                    }
+                }
                 case "set_tint" -> {
                     int selected=Math.floorMod(i,TINTS.length), targetIndex=Math.floorDiv(i,TINTS.length)-1;
                     if(i>=0&&targetIndex==-1){

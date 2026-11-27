@@ -44,6 +44,7 @@ public final class TimekeeperScreen extends Screen {
         button(20+half,78,half,recording()?"Cancel recording":"Clear recording",()->send(recording()?"cancel":"clear",0),recording()||(unlocked&&hasCurrent()));
         button(10,103,half,"Retain: "+(state.getBoolean("retain")?"ON":"OFF"),()->send("retain",0),unlocked);
         button(20+half,103,half,"Tint: "+ChronoFactory.TINT_NAMES[state.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(-1,20+half,103,half,state.getInt("tint")),unlocked);
+        button(w-137,17,127,state.getBoolean("strict")?"Mode: Strict":"Mode: Parallel",()->send("mode",-1),unlocked&&!running());
         if(creative()){
             button(10,128,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
             button(20+half,128,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
@@ -52,6 +53,7 @@ public final class TimekeeperScreen extends Screen {
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
                 int y=154+row*22;CompoundTag entry=saved().getCompound(i);
+                button(w-212,y,35,entry.getBoolean("strict")?"Strict":"Par.",()->send("mode",i),unlocked&&!entry.getBoolean("active"));
                 button(w-174,y,50,ChronoFactory.TINT_NAMES[entry.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(i,w-174,y,50,entry.getInt("tint")),unlocked);
                 button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->send("toggle",i),unlocked);
                 button(w-44,y,34,"Del",()->send("delete",i),unlocked);
@@ -121,7 +123,7 @@ public final class TimekeeperScreen extends Screen {
         g.fill(left,top,left+w,top+h,0xFF17131D);
         g.fill(left,top,left+w,top+3,0xFFAB4DE3);
         g.drawString(font,creative()?"CREATIVE PERSONAL TIMEKEEPER":"PERSONAL TIMEKEEPER",left+10,top+10,purple,false);
-        g.drawString(font,"PARALLEL TIMELINE",left+10,top+23,grey,false);
+        g.drawString(font,state.getBoolean("strict")?"STRICT TIMELINE":"PARALLEL TIMELINE",left+10,top+23,grey,false);
         g.fill(left+10,top+37,left+w-10,top+47,0xFF30243A);
         int energy=state.getInt("energy");
         int bar=creative()?w-20:(int)((w-20)*Math.min(1f,Math.max(0f,energy/100000f)));
@@ -135,8 +137,8 @@ public final class TimekeeperScreen extends Screen {
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
                 CompoundTag t=saved().getCompound(i);int y=154+row*22;
-                g.fill(left+10,top+y,left+w-180,top+y+20,0xFF261C31);
-                String name=font.plainSubstrByWidth(t.getString("name"),Math.max(10,w-198));
+                g.fill(left+10,top+y,left+w-218,top+y+20,0xFF261C31);
+                String name=font.plainSubstrByWidth(t.getString("name"),Math.max(10,w-236));
                 g.drawString(font,name,left+14,top+y+2,0xFF000000|ChronoFactory.TINTS[t.getInt("tint")%ChronoFactory.TINTS.length],false);
                 g.drawString(font,t.getInt("steps")+" steps"+(t.getBoolean("active")?" / active":""),left+14,top+y+11,grey,false);
             }
