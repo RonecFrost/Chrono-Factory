@@ -11,19 +11,27 @@ import net.neoforged.neoforge.network.PacketDistributor;
 public final class ClientControls{
     private static boolean attackHeld,useHeld;
     private static int airTicks;
+    private static boolean sentUse,sentAttack;
+    private static boolean recording(Minecraft mc){if(mc.player==null)return false;for(int i=0;i<36;i++){var stack=mc.player.getInventory().getItem(i);if(ChronoFactory.watch(stack)&&ChronoFactory.data(stack).getBoolean("recording"))return true;}return false;}
+    private static void input(boolean use,boolean down){if(use){if(sentUse==down)return;sentUse=down;}else{if(sentAttack==down)return;sentAttack=down;}PacketDistributor.sendToServer(new ChronoFactory.HeldInput(use,down));}
     @SubscribeEvent public static void tick(ClientTickEvent.Post e){
         Minecraft mc=Minecraft.getInstance();
         if(!mc.options.keyAttack.isDown())attackHeld=false;
         if(!mc.options.keyUse.isDown())useHeld=false;
-        if(mc.player==null){attackHeld=false;useHeld=false;airTicks=0;return;}
-        boolean recording=false;
-        for(int i=0;i<36;i++){var stack=mc.player.getInventory().getItem(i);if(ChronoFactory.watch(stack)&&ChronoFactory.data(stack).getBoolean("recording")){recording=true;break;}}
+        if(mc.player==null){attackHeld=false;useHeld=false;sentAttack=false;sentUse=false;airTicks=0;return;}
+        boolean recording=recording(mc);
+        boolean eligible=recording&&mc.screen==null&&!ChronoFactory.watch(mc.player.getMainHandItem());
+        input(true,eligible&&mc.options.keyUse.isDown());input(false,eligible&&mc.options.keyAttack.isDown());
         boolean air=recording&&mc.screen==null&&mc.options.keyAttack.isDown()&&!ChronoFactory.watch(mc.player.getMainHandItem())&&(mc.hitResult==null||mc.hitResult.getType()==net.minecraft.world.phys.HitResult.Type.MISS);
         if(air){if(airTicks++%4==0)PacketDistributor.sendToServer(ChronoFactory.AirSwing.INSTANCE);}else airTicks=0;
     }
     @SubscribeEvent public static void click(InputEvent.InteractionKeyMappingTriggered e){
         var p=Minecraft.getInstance().player;
-        if(p==null||!(p.getMainHandItem().getItem() instanceof ChronoFactory.Watch))return;
+        if(p==null)return;
+        if(!(p.getMainHandItem().getItem() instanceof ChronoFactory.Watch)){
+            if(recording(Minecraft.getInstance())){if(e.isUseItem())input(true,true);if(e.isAttack())input(false,true);}
+            return;
+        }
         if(e.isAttack()){
             e.setCanceled(true);e.setSwingHand(false);
             if(!attackHeld){attackHeld=true;PacketDistributor.sendToServer(ChronoFactory.Click.INSTANCE);}

@@ -1,4 +1,4 @@
-# Chrono Factory 0.3.0-alpha
+# Chrono Factory 0.3.1-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -22,3 +22,8 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 
 - Air attacks while recording now send bounded swing samples. Parallel replays them against the actual ray target for the sampled duration, preserving saplings; strict expects empty space. New recordings only. Client packets are accepted only while a server-side recording is active.
 - Track cursor-held items as part of the temporary inventory, and when needed take a verified vertical-first or horizontal-first ledge step toward the recorded goal. No collision bypass.
+
+## 0.3.1 held inputs
+- New recordings store held right-click duration in server ticks and actual repeated block interaction offsets. Replays preserve the timing (not extra fabricated clicks) in Strict and Parallel. Missing targets/tools pause the active clock. Mining holds have a minimum recorded duration when start/break events are available. Air-swing final sample is shortened when released.
+- Test Create hand crank: record holding right-click continuously for 20 seconds, release, then record another action. Right-click Echo to inspect elapsed/total time and interaction count. Check both modes and brief taps. Re-record old timelines to capture duration; old recordings still load as one-tick uses.
+- No generic in-air held item use or simultaneous movement/use playback yet. Server tick time slows if TPS drops. Create has its own short spin-down time. No hard Create dependency.

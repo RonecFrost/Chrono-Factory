@@ -74,6 +74,7 @@ public final class ChronoFactory {
         game.addListener(ChronoFactory::levelTick);
         game.addListener(ChronoFactory::onUse);
         game.addListener(ChronoFactory::onBreak);
+        game.addListener(ChronoFactory::onAttackBlock);
         game.addListener(ChronoFactory::logout);
         game.addListener(ChronoFactory::login);
         game.addListener(ChronoFactory::death);
@@ -92,6 +93,14 @@ public final class ChronoFactory {
         public static final StreamCodec<RegistryFriendlyByteBuf,AirSwing> CODEC=StreamCodec.unit(INSTANCE);
         public Type<AirSwing> type(){return TYPE;}
     }
+    public record HeldInput(boolean use,boolean down) implements CustomPacketPayload {
+        public static final Type<HeldInput> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"held_input"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,HeldInput> CODEC=new StreamCodec<>(){
+            public HeldInput decode(RegistryFriendlyByteBuf b){return new HeldInput(b.readBoolean(),b.readBoolean());}
+            public void encode(RegistryFriendlyByteBuf b,HeldInput p){b.writeBoolean(p.use());b.writeBoolean(p.down());}
+        };
+        public Type<HeldInput> type(){return TYPE;}
+    }
     public record UiCommand(UUID key,String action,int index) implements CustomPacketPayload {
         public static final Type<UiCommand> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"ui_command"));
         public static final StreamCodec<RegistryFriendlyByteBuf,UiCommand> CODEC=new StreamCodec<>() {
@@ -109,7 +118,8 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("4");
+        var registrar=e.registrar("5");
+        registrar.playToServer(HeldInput.TYPE,HeldInput.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)inputEdge(p,msg);}));
         registrar.playToServer(AirSwing.TYPE,AirSwing.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)recordAirSwing(p);}));
         registrar.playToServer(Click.TYPE,Click.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) cycle(p);}));
         registrar.playToServer(UiCommand.TYPE,UiCommand.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) uiCommand(p,msg);}));
@@ -171,8 +181,44 @@ public final class ChronoFactory {
         int bulkStart=-1;
         boolean menuSeen;
         int tick,lastMoveTick,lastAirTick=-20;
+        boolean useDown,attackDown;
+        int useEpoch,attackTargetStart;
+        BlockPos attackTarget;
+        CompoundTag heldUse;
         Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);}
-        void add(CompoundTag a){if(actions.size()<MAX_ACTIONS)actions.add(a);}
+        void closeUse(int end){
+            if(heldUse==null)return;
+            int start=heldUse.getInt("recordTick");int[] offsets=heldUse.getIntArray("useOffsets");
+            int minimum=offsets.length==0?1:offsets[offsets.length-1]+1;
+            heldUse.putInt("duration",Math.max(minimum,Math.max(1,end-start)));
+            heldUse=null;
+        }
+        boolean sameUse(CompoundTag a,CompoundTag b){
+            return a.getLong("pos")==b.getLong("pos")&&a.getInt("face")==b.getInt("face")&&a.getString("block").equals(b.getString("block"))
+                &&a.getBoolean("sneak")==b.getBoolean("sneak")&&Objects.equals(a.get("item"),b.get("item"))
+                &&a.getInt("holdId")==b.getInt("holdId")
+                &&Math.abs(a.getDouble("hx")-b.getDouble("hx"))<.15&&Math.abs(a.getDouble("hy")-b.getDouble("hy"))<.15&&Math.abs(a.getDouble("hz")-b.getDouble("hz"))<.15;
+        }
+        void add(CompoundTag a){
+            if("use".equals(a.getString("type"))){
+                int at=a.getInt("recordTick");
+                if(heldUse!=null&&a.getInt("holdId")!=0&&sameUse(heldUse,a)){
+                    int[] old=heldUse.getIntArray("useOffsets");int offset=Math.max(0,at-heldUse.getInt("recordTick"));
+                    if(old.length<2400&&offset<=24000){
+                        int[] offsets=Arrays.copyOf(old,old.length+1);offsets[old.length]=Math.max(offset,old[old.length-1]+1);
+                        heldUse.putIntArray("useOffsets",offsets);heldUse.putInt("duration",offsets[old.length]+1);return;
+                    }
+                }
+                closeUse(at);
+                if(actions.size()>=MAX_ACTIONS)return;
+                a.putIntArray("useOffsets",new int[]{0});a.putInt("duration",1);actions.add(a);
+                if(useDown&&a.getInt("holdId")==useEpoch)heldUse=a;
+                if(a.contains("releaseTick")){if(heldUse==a)closeUse(a.getInt("releaseTick"));else a.putInt("duration",Math.max(1,a.getInt("releaseTick")-at));}
+            }else{
+                closeUse(tick);
+                if(actions.size()<MAX_ACTIONS)actions.add(a);
+            }
+        }
         void move(ServerPlayer p){CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){a.putInt("moveTicks",Math.max(1,Math.min(4,tick-lastMoveTick)));add(a);last=a;lastMoveTick=tick;}}
     }
     static void cycle(ServerPlayer p){
@@ -201,6 +247,7 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.remove(p.getUUID());if(r==null){restore(p);return;}
         if(r.menuSeen&&r.container!=null)captureTransfers(p,r);
         else if(r.pendingUse!=null)r.add(r.pendingUse);
+        r.closeUse(r.tick);
         if(p.containerMenu!=p.inventoryMenu)p.closeContainer();
         r.move(p);
         ItemStack s=find(p,r.watch);
@@ -243,6 +290,36 @@ public final class ChronoFactory {
         Vec3 v=e.getItemEntity().position();a.putDouble("ix",v.x);a.putDouble("iy",v.y);a.putDouble("iz",v.z);r.add(a);
         if(r.menuSeen)r.previous=snapshot(p);
     }
+    static void inputEdge(ServerPlayer p,HeldInput edge){
+        Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
+        if(edge.use()){
+            if(edge.down()&&!r.useDown){r.useDown=true;r.useEpoch++;if(r.useEpoch==0)r.useEpoch=1;}
+            else if(!edge.down()&&r.useDown){
+                r.useDown=false;
+                if(r.pendingUse!=null&&r.pendingUse.getInt("holdId")==r.useEpoch)r.pendingUse.putInt("releaseTick",r.tick);
+                r.closeUse(r.tick);
+            }
+        }else{
+            if(edge.down()&&!r.attackDown){r.attackDown=true;r.attackTarget=null;r.attackTargetStart=r.tick;}
+            else if(!edge.down()&&r.attackDown){r.attackDown=false;r.attackTarget=null;
+                if(!r.actions.isEmpty()){
+                    CompoundTag last=r.actions.getCompound(r.actions.size()-1);
+                    if("air_swing".equals(last.getString("type"))&&last.contains("recordTick"))
+                        last.putInt("ticks",Math.max(1,Math.min(last.getInt("ticks"),r.tick-last.getInt("recordTick"))));
+                }
+            }
+        }
+    }
+    static void onAttackBlock(PlayerInteractEvent.LeftClickBlock e){
+        if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||e.isCanceled())return;
+        Recording r=RECORDINGS.get(p.getUUID());if(r==null||watch(p.getMainHandItem()))return;
+        String action=e.getAction().name();
+        if("START".equals(action)){
+            if(r.attackTarget==null||!r.attackTarget.equals(e.getPos())){
+                r.attackTarget=e.getPos().immutable();r.attackTargetStart=r.tick;
+            }
+        }else if("ABORT".equals(action))r.attackTarget=null;
+    }
     static BlockHitResult aimedBlock(Player p){
         Vec3 eye=p.getEyePosition();return p.level().clip(new ClipContext(eye,eye.add(p.getLookAngle().scale(Math.min(5,p.blockInteractionRange()))),ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,p));
     }
@@ -250,7 +327,7 @@ public final class ChronoFactory {
         Recording r=RECORDINGS.get(p.getUUID());
         if(r==null||p.containerMenu!=p.inventoryMenu||r.tick-r.lastAirTick<3||watch(p.getMainHandItem())||aimedBlock(p).getType()!=HitResult.Type.MISS)return;
         r.lastAirTick=r.tick;r.move(p);
-        CompoundTag a=point(p,"air_swing");a.putInt("ticks",4);
+        CompoundTag a=point(p,"air_swing");a.putInt("ticks",4);a.putInt("recordTick",r.tick);
         ItemStack held=p.getMainHandItem();if(!held.isEmpty())a.put("item",held.copyWithCount(1).save(p.registryAccess()));r.add(a);
     }
     static String itemKey(ItemStack s){ItemStack copy=s.copyWithCount(1);if(copy.isDamageableItem())copy.setDamageValue(0);return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(copy.getItem()).toString()+":"+copy.getComponentsPatch();}
@@ -309,7 +386,7 @@ public final class ChronoFactory {
         if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||watch(e.getItemStack())||e.isCanceled())return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||e.getHand()!=InteractionHand.MAIN_HAND)return;
         r.move(p);BlockPos pos=e.getPos();
-        CompoundTag a=point(p,"use");a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
+        CompoundTag a=point(p,"use");a.putInt("recordTick",r.tick);a.putInt("holdId",r.useDown?r.useEpoch:0);a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
         BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));
         IItemHandler inventory=handler(p.serverLevel(),pos);
         if(inventory!=null&&!p.isShiftKeyDown()){
@@ -322,7 +399,10 @@ public final class ChronoFactory {
     static void onBreak(BlockEvent.BreakEvent e){
         if(!(e.getPlayer() instanceof ServerPlayer p)||p instanceof FakePlayer||e.isCanceled())return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;r.move(p);
-        CompoundTag a=point(p,"break");a.putLong("pos",e.getPos().asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(e.getState().getBlock()).toString());if(!p.getMainHandItem().isEmpty())a.put("item",p.getMainHandItem().copyWithCount(1).save(p.registryAccess()));r.add(a);
+        CompoundTag a=point(p,"break");
+        if(r.attackTarget!=null&&r.attackTarget.equals(e.getPos()))a.putInt("duration",Math.max(1,r.tick-r.attackTargetStart+1));
+        else a.putInt("duration",1);
+        r.attackTarget=null;a.putLong("pos",e.getPos().asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(e.getState().getBlock()).toString());if(!p.getMainHandItem().isEmpty())a.put("item",p.getMainHandItem().copyWithCount(1).save(p.registryAccess()));r.add(a);
     }
     static void playerTick(PlayerTickEvent.Post e){
         if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
@@ -446,6 +526,7 @@ public final class ChronoFactory {
             if(!a.getUUID("id").equals(entity.loopId()))continue;
             ListTag actions=timeline(a.getCompound("timeline"));int i=a.getInt("index");
             String action=i>=0&&i<actions.size()?actions.getCompound(i).getString("type"):"transition";
+            if(i>=0&&i<actions.size()&&actions.getCompound(i).contains("duration"))action+=" "+String.format(java.util.Locale.ROOT,"%.1f/%.1fs",a.getInt("heldElapsed")/20.0,actions.getCompound(i).getInt("duration")/20.0);
             if(i>=0&&i<actions.size()&&actions.getCompound(i).getBoolean("bulkStart")&&!a.getCompound("timeline").getBoolean("strict"))action="deposit all";
             p.sendSystemMessage(Component.literal("[Chrono] "+a.getCompound("timeline").getString("name")+" | "+(a.getCompound("timeline").getBoolean("strict")?"Strict":"Parallel")+" | Cycle "+(a.getInt("cycles")+1)+" | Step "+Math.min(i+1,actions.size())+"/"+actions.size()+" ("+action+")"));
             p.sendSystemMessage(Component.literal("Status: "+(a.getString("reason").isEmpty()?"Running":a.getString("reason"))));
@@ -516,7 +597,7 @@ public final class ChronoFactory {
             if(fade%2==0)particles(l,here,fade,color,position.getFloat("yaw"));
             if(fade>=8){
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -624,9 +705,35 @@ public final class ChronoFactory {
                     String where=coords(pos)+(slot>=0?" slot "+(slot+1):"");
                     reason=take?"Waiting to withdraw "+(expected-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+where:"Waiting to deposit "+itemName(wanted)+" at "+where+" (missing items or destination full)";
                 }
+            }else if("use".equals(type)){
+                int elapsed=a.getInt("heldElapsed"),cursor=a.getInt("useCursor");
+                int duration=Math.max(1,action.getInt("duration"));
+                int[] offsets=action.getIntArray("useOffsets");if(offsets.length==0)offsets=new int[]{0};
+                duration=Math.max(duration,offsets[offsets.length-1]+1);
+                boolean advance=true;
+                if(cursor<offsets.length&&elapsed>=offsets[cursor]){
+                    String actual=net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(l.getBlockState(pos).getBlock()).toString();
+                    if(!actual.equals(action.getString("block"))){advance=false;reason="Expected "+action.getString("block")+" at "+coords(pos)+", found "+actual;}
+                    else if(!equip(f,wanted)){advance=false;reason="Missing required item: "+itemName(wanted);}
+                    else{
+                        f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+                        InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));
+                        if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
+                        if(result.consumesAction()){a.putInt("useCursor",++cursor);swung=true;}
+                        else{advance=false;reason="Interaction rejected at "+coords(pos)+" using "+itemName(wanted);}
+                    }
+                }
+                if(advance){
+                    elapsed++;a.putInt("heldElapsed",elapsed);working=true;
+                    done=elapsed>=duration&&cursor>=offsets.length;
+                    reason="Holding use: "+String.format(java.util.Locale.ROOT,"%.1f / %.1f s",elapsed/20.0,duration/20.0)+" ("+cursor+"/"+offsets.length+" interactions)";
+                }
+            }else if("break".equals(type)&&a.getBoolean("brokenForHold")){
+                int elapsed=a.getInt("heldElapsed")+1;a.putInt("heldElapsed",elapsed);working=true;swung=true;
+                done=elapsed>=Math.max(1,action.getInt("duration"));reason="Finishing recorded mining hold";
             }else if(!strict&&"break".equals(type)&&l.getBlockState(pos).isAir()){
                 if(firstLog(actions,index,l)&&saplingNear(l,pos))reason="Waiting for sapling to grow at "+coords(pos);
-                else{done=true;working=true;swung=true;reason="Swing at empty space";}
+                else{int elapsed=a.getInt("heldElapsed")+1;a.putInt("heldElapsed",elapsed);done=elapsed>=Math.max(1,action.getInt("duration"));working=true;swung=true;reason="Swing at empty space";}
             }else if(!strict&&"break".equals(type)&&l.getBlockState(pos).is(BlockTags.SAPLINGS)){
                 if(firstLog(actions,index,l))reason="Waiting for sapling to grow at "+coords(pos);
                 else{done=true;reason="Preserving sapling";}
@@ -638,17 +745,17 @@ public final class ChronoFactory {
                 else if("break".equals(type)){
                     float progress=a.getFloat("progress")+state.getDestroyProgress(f,l,pos);a.putFloat("progress",progress);working=progress>0;swung=working;
                     reason="Mining "+block+" at "+coords(pos)+" ("+Math.min(100,(int)(progress*100))+"%)";
-                    if(progress>=1){done=f.gameMode.destroyBlock(pos);if(done&&!tl.getBoolean("explicitPickup"))collect(f,l,pos);if(!done){working=false;reason="Block break denied at "+coords(pos);}}
-                }else if("use".equals(type)){
-                    InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));done=result.consumesAction();working=done;swung=done;
-                    if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
-                    reason="Interaction rejected at "+coords(pos)+" using "+itemName(wanted);
+                    if(working)a.putInt("heldElapsed",a.getInt("heldElapsed")+1);
+                    if(progress>=1){boolean broken=f.gameMode.destroyBlock(pos);if(broken){
+                        if(!tl.getBoolean("explicitPickup"))collect(f,l,pos);
+                        a.putBoolean("brokenForHold",true);done=a.getInt("heldElapsed")>=Math.max(1,action.getInt("duration"));
+                    }else{working=false;reason="Block break denied at "+coords(pos);}}
                 }else reason="Unsupported action: "+type;
             }
         }
         if(!strict&&"wait".equals(type))sweepItems(f,l,here);
         if(!"air_swing".equals(type)&&!"move".equals(type)){a.remove("sweepPos");a.remove("sweepProgress");}
-        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("segmentSpeed");reason="Completed "+type;}
+        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);
         double moved=echo.position().distanceTo(here);
         echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));echo.setShiftKeyDown(position.getBoolean("sneak"));
