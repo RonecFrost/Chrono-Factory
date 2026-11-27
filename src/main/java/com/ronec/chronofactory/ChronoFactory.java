@@ -240,6 +240,8 @@ public final class ChronoFactory {
         Map<String,ItemStack> previous=new HashMap<>();
         List<ItemStack> containerBefore=new ArrayList<>();
         CompoundTag pendingUse;
+        CraftingReplay.Capture craftCapture;
+        BlockPos craftStation;
         int bulkStart=-1;
         boolean menuSeen;
         int tick,lastMoveTick,lastAirTick=-20;
@@ -368,14 +370,21 @@ public final class ChronoFactory {
     }
     public static void rawGui(ServerPlayer p,int slot,int button,int click,boolean close){
         if(p instanceof FakePlayer)return;Recording r=RECORDINGS.get(p.getUUID());
-        if(r==null||r.gui.size()>=4096)return;
+        if(r==null)return;
+        if(!close)r.craftCapture=CraftingReplay.before(p,r,slot,click);
+        if(r.gui.size()>=4096)return;
         CompoundTag event=new CompoundTag();event.putString("kind",close?"close":"click");event.putInt("tick",r.raw.size()/3);event.putInt("slot",slot);event.putInt("button",button);event.putInt("click",click);event.putBoolean("close",close);event.putBoolean("inventory",p.containerMenu==p.inventoryMenu);event.putInt("slots",p.containerMenu.slots.size());r.gui.add(event);
+    }
+    public static void rawMenuButton(ServerPlayer p,int button){
+        if(p instanceof FakePlayer)return;Recording r=RECORDINGS.get(p.getUUID());if(r==null||r.gui.size()>=4096)return;
+        CompoundTag event=new CompoundTag();event.putString("kind","button");event.putInt("tick",r.raw.size()/3);event.putInt("button",button);r.gui.add(event);
     }
     public static void afterGui(ServerPlayer p){
         if(p instanceof FakePlayer)return;
         Recording r=RECORDINGS.get(p.getUUID());
-        if(r==null||r.container==null)return;
-        if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;}
+        if(r==null)return;
+        CraftingReplay.after(p,r);
+        if(r.container!=null&&p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;}
     }
     static void inputEdge(ServerPlayer p,HeldInput edge){
         Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
@@ -474,7 +483,7 @@ public final class ChronoFactory {
             if(slots==0&&requested>recorded){recordTransfer(p,r,item,requested-recorded,take,-1);recorded=requested;}
             if(recorded>0){if(take)withdrew=true;else deposited=true;}
         }
-        if(deposited&&!withdrew&&now.isEmpty()&&firstAction<r.actions.size()){
+        if(deposited&&!withdrew&&now.isEmpty()&&firstAction<r.actions.size()&&!machineInventory(p.serverLevel(),r.container)){
             // Keep a complete dump adaptive, while preserving the net recorded
             // quantities and preferred destination slots for the layout.
             r.actions.getCompound(firstAction).putBoolean("bulkStart",true);
@@ -482,7 +491,13 @@ public final class ChronoFactory {
         }
         r.previous=now;r.containerBefore=current;r.bulkStart=-1;
     }
-    static IItemHandler handler(ServerLevel l,BlockPos pos){return l.getCapability(Capabilities.ItemHandler.BLOCK,pos,null);}
+    static boolean machineInventory(ServerLevel l,BlockPos pos){return l.getBlockEntity(pos) instanceof net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;}
+    static IItemHandler handler(ServerLevel l,BlockPos pos){
+        // Furnace slots are input, fuel and output. Use their native container
+        // restrictions, not sided automation views with remapped slot numbers.
+        if(l.getBlockEntity(pos) instanceof net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity furnace)return new net.neoforged.neoforge.items.wrapper.InvWrapper(furnace);
+        return l.getCapability(Capabilities.ItemHandler.BLOCK,pos,null);
+    }
     static void onUse(PlayerInteractEvent.RightClickBlock e){
         if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||watch(e.getItemStack())||e.isCanceled())return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||e.getHand()!=InteractionHand.MAIN_HAND)return;
@@ -492,6 +507,10 @@ public final class ChronoFactory {
         BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));
         if(r.gui.size()<4096){CompoundTag input=a.copy();input.putString("kind","use");input.putInt("tick",r.raw.size()/3);input.putInt("selected",p.getInventory().selected);r.gui.add(input);}
         IItemHandler inventory=handler(p.serverLevel(),pos);
+        r.craftStation=null;
+        if(p.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.CRAFTING_TABLE)||p.level().getBlockState(pos).is(net.minecraft.world.level.block.Blocks.STONECUTTER)){
+            r.craftStation=pos.immutable();r.pendingUse=null;return;
+        }
         if(inventory!=null&&!p.isShiftKeyDown()){
             // A chest can be opened while holding an item. Wait until we know whether
             // the interaction opened a menu or was a normal right-click on the machine.
@@ -577,10 +596,10 @@ public final class ChronoFactory {
     static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take,int exactSlot){
         int initial=n;
         if(h==null||wanted.isEmpty()||n<=0||exactSlot>=h.getSlots())return 0;
-        int first=take?0:Math.max(0,exactSlot),last=h.getSlots();
+        int first=take&&exactSlot>=0?exactSlot:0,last=take&&exactSlot>=0?exactSlot+1:h.getSlots();
         Inventory inv=f.getInventory();
         if(take){
-            int available=availableToTake(h,wanted,n),space=0;
+            int available=exactSlot>=0?(matches(h.getStackInSlot(exactSlot),wanted)?h.extractItem(exactSlot,n,true).getCount():0):availableToTake(h,wanted,n),space=0;
             for(int i=0;i<36;i++){ItemStack s=inv.getItem(i);if(s.isEmpty())space+=wanted.getMaxStackSize();else if(ItemStack.isSameItemSameComponents(s,wanted))space+=Math.max(0,s.getMaxStackSize()-s.getCount());}
             if(available<n||space<n)return 0;
             for(int i=first;i<last&&n>0;i++){if(!matches(h.getStackInSlot(i),wanted))continue;ItemStack s=h.extractItem(i,n,false);int got=s.getCount();inv.add(s);if(!s.isEmpty())f.drop(s,false);n-=got;}return initial-n;
@@ -707,6 +726,7 @@ public final class ChronoFactory {
             String task=index<actions.size()?actions.getCompound(index).getString("type"):"Remanifesting";
             if(strict)task=a.getString("strictTask");
             else if(index<actions.size()&&actions.getCompound(index).getBoolean("bulkStart"))task="Organized deposit";
+            else if(index<actions.size()&&"craft".equals(task)){CompoundTag action=actions.getCompound(index);task="Craft "+action.getInt("crafts")+" x "+itemName(ItemStack.parseOptional(p.registryAccess(),action.getCompound("result")));}
             else if(index<actions.size()&&"transfer".equals(task)){CompoundTag action=actions.getCompound(index);task=(action.getBoolean("take")?"Withdraw ":"Deposit ")+action.getInt("count")+" x "+itemName(template(action,p.serverLevel()));}
             state.putString("task",task.isEmpty()?"Waiting":task);
             state.put("inventory",a.getList("inventory",Tag.TAG_COMPOUND).copy());
@@ -772,6 +792,13 @@ public final class ChronoFactory {
         if(!(e.getLevel() instanceof ServerLevel l))return;WorldData d=world(l);
         for(int i=d.echoes.size()-1;i>=0;i--){CompoundTag a=d.echoes.getCompound(i);try{if(step(l,a)){d.echoes.remove(i);}d.setDirty();}catch(Exception ex){LogUtils.getLogger().error("Chrono Factory Echo replay failed",ex);a.putBoolean("dismiss",true);d.setDirty();}}
     }
+    static void dropInventory(ServerLevel l,FakePlayer f,Vec3 here){
+        for(int i=0;i<f.getInventory().getContainerSize();i++){
+            ItemStack st=f.getInventory().getItem(i);if(st.isEmpty())continue;
+            ItemEntity item=new ItemEntity(l,here.x,here.y+.15,here.z,st.copy());item.setDefaultPickUpDelay();l.addFreshEntity(item);
+        }
+        f.getInventory().clearContent();
+    }
     static boolean step(ServerLevel l,CompoundTag a){
         CompoundTag position=a.getCompound("position");Vec3 here=vec(position);if(!l.hasChunkAt(BlockPos.containing(here)))return false;
         ServerPlayer owner=l.getServer().getPlayerList().getPlayer(a.getUUID("owner"));
@@ -792,7 +819,7 @@ public final class ChronoFactory {
         if(a.getBoolean("dismiss")||(!docked&&!watch.isEmpty()&&!a.getBoolean("creative")&&energy(watch)<=0)){
             EchoInventoryMenu.closeFor(l,a.getUUID("id"));
             if(f instanceof StrictReplay.MacroPlayer macro){StrictReplay.restoreCursor(macro,a);StrictReplay.forget(macro,a);}
-            for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack st=f.getInventory().getItem(i);if(!st.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,st.copy()));}
+            dropInventory(l,f,here);
             f.getInventory().clearContent();if(echo!=null)echo.discard();particles(l,here,0,tint(a.getCompound("timeline")),position.getFloat("yaw"));return true;
         }
         if(EchoInventoryMenu.isOpen(l,a.getUUID("id"))){if(echo!=null)echo.visual(tint(a.getCompound("timeline")),24,false,a.getFloat("walkPhase"),echo.visualHeld(),false,position.getFloat("pitch"));f.getInventory().clearContent();if(!a.getBoolean("creative")&&!watch.isEmpty()){energy(watch,energy(watch)-2);if(dock!=null)dock.setChanged();}return false;}
@@ -801,8 +828,8 @@ public final class ChronoFactory {
         int color=tint(tl);
         if(docked&&!a.getBoolean("creative")&&energy(watch)<=0&&a.getInt("index")<actions.size()&&(!strict||a.getInt("rawIndex")<tl.getIntArray("raw").length/3)){a.putString("reason","Waiting for Relay energy");if(echo!=null)echo.visual(color,24,false,a.getFloat("walkPhase"),f.getMainHandItem(),false,position.getFloat("pitch"));f.getInventory().clearContent();return false;}
         if(dock!=null)dock.setChanged();
-        // At the end of a timeline, fade out and reappear at the initial position.
-        // Logical inventory belongs to the loop and is never regenerated by visual remanifestation.
+        // At every loop boundary, physical material remains at the ending location.
+        // The next manifestation starts empty, including tools, armor and cursor items.
         if(a.getInt("index")>=actions.size()||(strict&&a.getInt("rawIndex")>=tl.getIntArray("raw").length/3)){
             int fade=a.getInt("fade")+1;a.putInt("fade",fade);int limit=repeats(tl);boolean last=limit>0&&a.getInt("cycles")+1>=limit;
             a.putString("reason",last?"Final iteration complete - dissolving":"Loop complete - remanifesting");
@@ -810,9 +837,14 @@ public final class ChronoFactory {
             if(fade%2==0)particles(l,here,fade,color,position.getFloat("yaw"));
             if(fade>=8){
                 if(last){a.putBoolean("dismiss",true);a.putString("reason","All "+limit+" iterations complete");f.getInventory().clearContent();return false;}
+                if(!a.getBoolean("boundaryDropped")){
+                    if(f instanceof StrictReplay.MacroPlayer macro){StrictReplay.restoreCursor(macro,a);StrictReplay.finishCycle(macro,a);}
+                    dropInventory(l,f,here);a.put("inventory",new ListTag());a.remove("strictCursor");a.putBoolean("boundaryDropped",true);
+                    if(echo!=null)echo.discard();a.remove("entity");
+                }
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
-                if(f instanceof StrictReplay.MacroPlayer macro){StrictReplay.restoreCursor(macro,a);StrictReplay.finishCycle(macro,a);a.put("inventory",f.getInventory().save(new ListTag()));}
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");
+                a.remove("boundaryDropped");
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -904,7 +936,9 @@ public final class ChronoFactory {
             BlockPos pos=BlockPos.of(action.getLong("pos"));
             if(!l.hasChunkAt(pos))reason="Target chunk is not loaded";
             else if(here.distanceToSqr(Vec3.atCenterOf(pos))>36)reason="Target out of reach at "+coords(pos);
-            else if("transfer".equals(type)){
+            else if("craft".equals(type)){
+                CraftingReplay.Outcome result=CraftingReplay.perform(l,f,a,action,pos);done=result.done();working=result.working();swung=working;reason=result.reason();
+            }else if("transfer".equals(type)){
                 IItemHandler h=handler(l,pos);
                 if(h==null)reason="No accessible inventory at "+coords(pos);
                 else if(!strict&&action.getBoolean("bulkSkip")){done=true;reason="Already deposited inventory";}
@@ -913,12 +947,12 @@ public final class ChronoFactory {
                     int left=depositOrganized(f,h,actions,index,l);done=left==0;working=left<before;reason="Destination full or rejects "+left+" carried items at "+coords(pos);
                 }else{
                     boolean take=action.getBoolean("take");int expected=action.getInt("count");
-                    int slot=!take&&action.contains("slot")?action.getInt("slot"):-1;
+                    boolean machine=machineInventory(l,pos);int slot=(!take||machine)&&action.contains("slot")?action.getInt("slot"):-1;
                     if(slot>=h.getSlots())slot=-1;
                     int n=expected-a.getInt("transferred");
-                    if(!strict&&!take)n=Math.min(n,carried(f,wanted));
-                    int moved=transfer(f,h,wanted,n,take,slot);a.putInt("transferred",a.getInt("transferred")+moved);
-                    done=a.getInt("transferred")>=expected||(!strict&&!take&&carried(f,wanted)==0);working=moved>0;
+                    if(!strict&&!take&&!machine)n=Math.min(n,carried(f,wanted));
+                    int moved=machine&&!take?(slot>=0?insertFromInventory(f,h,wanted,n,slot,true):0):transfer(f,h,wanted,n,take,slot);a.putInt("transferred",a.getInt("transferred")+moved);
+                    done=a.getInt("transferred")>=expected||(!strict&&!take&&!machine&&carried(f,wanted)==0);working=moved>0;
                     String where=coords(pos)+(slot>=0?" preferred slot "+(slot+1):"");
                     int remaining=Math.max(0,expected-a.getInt("transferred"));
                     reason=take?"Withdraw "+expected+" x "+itemName(wanted)+"; "+remaining+" remaining, "+availableToTake(h,wanted,remaining)+" available (up to required) at "+where:"Waiting to deposit "+itemName(wanted)+" at "+where+" (missing items or destination full)";
@@ -977,7 +1011,7 @@ public final class ChronoFactory {
         }
         if(!strict&&"wait".equals(type))sweepItems(f,l,here);
         if(!"air_swing".equals(type)&&!"move".equals(type)){a.remove("sweepPos");a.remove("sweepProgress");}
-        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("segmentSpeed");reason="Completed "+type;}
+        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);
         double moved=echo.position().distanceTo(here);
         echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));echo.setShiftKeyDown(position.getBoolean("sneak"));

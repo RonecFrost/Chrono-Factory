@@ -114,7 +114,8 @@ public final class StrictReplay {
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
             CompoundTag event=gui.getCompound(cursor++);
-            if("use".equals(event.getString("kind"))){recordedUse(l,f,event);hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
+            if("button".equals(event.getString("kind"))){if(f.containerMenu!=f.inventoryMenu&&f.containerMenu.stillValid(f))f.containerMenu.clickMenuButton(f,event.getInt("button"));task="Select recipe";}
+            else if("use".equals(event.getString("kind"))){recordedUse(l,f,event);hadRecordedUse=true;swung=true;delay=4;task="Right-click";}
             else{clickGui(f,event);task=event.getBoolean("close")?"Close inventory":"Click slot "+event.getInt("slot");}
         }
         a.putInt("guiIndex",cursor);
