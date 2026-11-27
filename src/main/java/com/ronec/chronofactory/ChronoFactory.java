@@ -291,12 +291,12 @@ public final class ChronoFactory {
                     int[] old=heldUse.getIntArray("useOffsets");int offset=Math.max(0,at-heldUse.getInt("recordTick"));
                     if(old.length<2400&&offset<=24000){
                         int[] offsets=Arrays.copyOf(old,old.length+1);offsets[old.length]=Math.max(offset,old[old.length-1]+1);
-                        heldUse.putIntArray("useOffsets",offsets);heldUse.putInt("duration",offsets[old.length]+1);heldUse.putInt("lastClick",at);return;
+                        heldUse.putIntArray("useOffsets",offsets);ListTag aims=heldUse.getList("useAims",Tag.TAG_COMPOUND);CompoundTag aim=new CompoundTag();aim.putFloat("yaw",a.getFloat("yaw"));aim.putFloat("pitch",a.getFloat("pitch"));aim.putDouble("hx",a.getDouble("hx"));aim.putDouble("hy",a.getDouble("hy"));aim.putDouble("hz",a.getDouble("hz"));aims.add(aim);heldUse.put("useAims",aims);heldUse.putInt("duration",offsets[old.length]+1);heldUse.putInt("lastClick",at);return;
                     }
                 }
                 closeUse(at);
                 if(actions.size()>=MAX_ACTIONS)return;
-                a.putIntArray("useOffsets",new int[]{0});a.putInt("duration",1);a.putInt("lastClick",at);actions.add(a);
+                a.putIntArray("useOffsets",new int[]{0});ListTag aims=new ListTag();CompoundTag aim=new CompoundTag();aim.putFloat("yaw",a.getFloat("yaw"));aim.putFloat("pitch",a.getFloat("pitch"));aim.putDouble("hx",a.getDouble("hx"));aim.putDouble("hy",a.getDouble("hy"));aim.putDouble("hz",a.getDouble("hz"));aims.add(aim);a.put("useAims",aims);a.putInt("duration",1);a.putInt("lastClick",at);actions.add(a);
                 heldUse=a;
                 if(a.contains("releaseTick")){if(heldUse==a)closeUse(a.getInt("releaseTick"));else a.putInt("duration",Math.max(1,a.getInt("releaseTick")-at));}
             }else{
@@ -413,6 +413,7 @@ public final class ChronoFactory {
         r.move(p);CompoundTag a=point(p,"drop");a.putInt("count",stack.getCount());a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
         Vec3 v=e.getEntity().getDeltaMovement();a.putDouble("vx",v.x);a.putDouble("vy",v.y);a.putDouble("vz",v.z);r.add(a);
         if(r.gui.size()<4096){CompoundTag raw=a.copy();raw.putString("kind","drop_item");raw.putInt("tick",r.raw.size()/3);raw.putInt("selected",p.getInventory().selected);r.gui.add(raw);}
+        if(r.transaction!=null)r.transaction.putBoolean("externalInventoryChange",true);
         if(r.menuSeen)adjustBaseline(r,stack,-stack.getCount());
     }
     static void pickup(ItemEntityPickupEvent.Post e){
@@ -421,6 +422,7 @@ public final class ChronoFactory {
         ItemStack stack=e.getOriginalStack();int count=stack.getCount()-e.getCurrentStack().getCount();if(count<=0||watch(stack))return;
         r.move(p);CompoundTag a=point(p,"pickup");a.putInt("count",count);a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
         Vec3 v=e.getItemEntity().position();a.putDouble("ix",v.x);a.putDouble("iy",v.y);a.putDouble("iz",v.z);r.add(a);
+        if(r.transaction!=null)r.transaction.putBoolean("externalInventoryChange",true);
         if(r.menuSeen)adjustBaseline(r,stack,count);
     }
     static void rawInput(ServerPlayer p,InputFrame frame){
@@ -519,7 +521,7 @@ public final class ChronoFactory {
     static List<ItemStack> slotSnapshot(IItemHandler h){
         List<ItemStack> slots=new ArrayList<>();if(h!=null)for(int i=0;i<h.getSlots();i++)slots.add(h.getStackInSlot(i).copy());return slots;
     }
-    static int matchingCount(ItemStack stack,ItemStack wanted){return matches(stack,wanted)?stack.getCount():0;}
+    static int matchingCount(ItemStack stack,ItemStack wanted){return !stack.isEmpty()&&!wanted.isEmpty()&&itemKey(stack).equals(itemKey(wanted))?stack.getCount():0;}
     static void recordTransfer(ServerPlayer p,Recording r,ItemStack item,int count,boolean take,int slot){
         CompoundTag a=point(p,"transfer");a.putLong("pos",r.container.asLong());a.putBoolean("take",take);a.putInt("count",count);a.putInt("slot",slot);a.put("item",item.copyWithCount(1).save(p.registryAccess()));
         if(take)r.bulkStart=-1;else if(r.bulkStart<0)r.bulkStart=r.actions.size();
@@ -668,6 +670,7 @@ public final class ChronoFactory {
         // match by kind and enchanted state, not exact enchantment rolls.
         if(a.has(DataComponents.CUSTOM_NAME)!=b.has(DataComponents.CUSTOM_NAME))return false;
         if(a.has(DataComponents.CUSTOM_NAME)&&!Objects.equals(a.get(DataComponents.CUSTOM_NAME),b.get(DataComponents.CUSTOM_NAME)))return false;
+        if(a.is(net.minecraft.world.item.Items.CROSSBOW)){return net.minecraft.world.item.CrossbowItem.isCharged(a)==net.minecraft.world.item.CrossbowItem.isCharged(b);}
         if(a.isDamageableItem()&&b.isDamageableItem()&&!a.has(DataComponents.CUSTOM_NAME)){
             if(a.isEnchanted()!=b.isEnchanted())return false;
             if(a.isEnchanted())return true;
@@ -679,7 +682,7 @@ public final class ChronoFactory {
     }
     static boolean equip(FakePlayer f,ItemStack wanted){
         if(wanted.isEmpty()){for(int i=0;i<36;i++)if(f.getInventory().getItem(i).isEmpty()){if(i!=0){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(i,old);f.getInventory().setItem(0,ItemStack.EMPTY);}f.getInventory().selected=0;return true;}return false;}
-        for(int i=0;i<36;i++)if(matches(f.getInventory().getItem(i),wanted)){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(0,f.getInventory().getItem(i));f.getInventory().setItem(i,old);f.getInventory().selected=0;return true;}return false;
+        for(int i=0;i<36;i++)if(matches(f.getInventory().getItem(i),wanted)){ItemStack old=f.getInventory().getItem(0);f.getInventory().setItem(0,f.getInventory().getItem(i));f.getInventory().setItem(i,old);f.getInventory().selected=0;return true;}if(matches(f.getOffhandItem(),wanted)){ItemActions.swap(f);return true;}return false;
     }
     static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take){return transfer(f,h,wanted,n,take,-1);}
     static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take,int exactSlot){
@@ -1082,9 +1085,10 @@ public final class ChronoFactory {
                     if(!actual.equals(action.getString("block"))){advance=false;reason="Expected "+action.getString("block")+" at "+coords(pos)+", found "+actual;}
                     else if(!equipHand(f,wanted,hand)){advance=false;reason="Missing required item: "+itemName(wanted);}
                     else{
-                        ItemActions.aim(f,action.getFloat("yaw"),action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+                        ListTag aims=action.getList("useAims",Tag.TAG_COMPOUND);CompoundTag aim=cursor<aims.size()?aims.getCompound(cursor):action;
+                        ItemActions.aim(f,aim.getFloat("yaw"),aim.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
                         if(ArsSupport.book(f.getMainHandItem()))ArsSupport.select(f.getMainHandItem(),action.getInt("spellSlot"));
-                        InteractionResult result=f.gameMode.useItemOn(f,l,f.getItemInHand(hand),hand,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));
+                        InteractionResult result=f.gameMode.useItemOn(f,l,f.getItemInHand(hand),hand,new BlockHitResult(new Vec3(aim.getDouble("hx"),aim.getDouble("hy"),aim.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));
                         if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
                         if(result.consumesAction()){a.putInt("lastBlockUseClock",a.getInt("playClock"));a.putInt("useCursor",++cursor);swung=true;}
                         else if(ArsSupport.book(f.getMainHandItem())){ItemActions.Outcome cast=ArsSupport.cast(l,f,a,f.getMainHandItem(),action.getInt("spellSlot"));advance=cast.done();reason=cast.reason();if(advance){a.putInt("useCursor",++cursor);swung=true;}}

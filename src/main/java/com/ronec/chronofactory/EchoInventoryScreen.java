@@ -31,5 +31,5 @@ public final class EchoInventoryScreen extends AbstractContainerScreen<EchoInven
         g.drawString(font,"Armor",181,51,0xFFBDB1C8,false);g.drawString(font,"Offhand",181,105,0xFFBDB1C8,false);
     }
     @Override public void render(GuiGraphics g,int mx,int my,float partial){super.render(g,mx,my,partial);renderTooltip(g,mx,my);}
-    @Override public void renderBackground(GuiGraphics g,int mx,int my,float partial){g.fill(0,0,width,height,0x60000000);}
+    @Override public void renderBackground(GuiGraphics g,int mx,int my,float partial){g.fill(0,0,width,height,0x60000000);renderBg(g,partial,mx,my);}
 }

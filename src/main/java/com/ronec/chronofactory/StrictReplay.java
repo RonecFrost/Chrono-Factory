@@ -140,7 +140,7 @@ public final class StrictReplay {
         }
         if(timed){if(a.contains("strictHeldTicks"))ItemActions.tickInput(l,f,a,true);}else ItemActions.tickInput(l,f,a,((flags&USE)!=0||hadRecordedUse)&&(flags&SCREEN)==0);if((flags&USE)==0&&!hadRecordedUse){delay=0;}
         a.putInt("strictUseDelay",delay);
-        f.setYRot(yaw);f.setXRot(pitch);f.setShiftKeyDown((flags&SNEAK)!=0);
+        if(!hadRecordedUse&&!swung){ItemActions.aim(f,yaw,pitch);}f.setShiftKeyDown((flags&SNEAK)!=0);
         int attackDelay=Math.max(0,a.getInt("strictAttackDelay")-1);
         if((flags&ATTACK)!=0&&(flags&SCREEN)==0&&f.containerMenu==f.inventoryMenu){
             task="Holding left-click";
@@ -162,9 +162,9 @@ public final class StrictReplay {
         if("Idle".equals(task)&&f.containerMenu!=f.inventoryMenu)task="Inventory open";
         a.putString("strictTask",task);
         if(moving)a.putFloat("walkPhase",a.getFloat("walkPhase")+(float)actual.horizontalDistance()*5);
-        echo.setPos(now.x,now.y,now.z);echo.setYRot(yaw);echo.setXRot(pitch);echo.setShiftKeyDown((flags&SNEAK)!=0);
+        echo.setPos(now.x,now.y,now.z);echo.setYRot(f.getYRot());echo.setXRot(f.getXRot());echo.setShiftKeyDown((flags&SNEAK)!=0);
         echo.hands(f.getOffhandItem(),offSwing||a.getBoolean("strictHeldOff")&&a.contains("strictHeldTicks"),a.contains("strictHeldTicks")&&f.getItemInHand(a.getBoolean("strictHeldOff")?InteractionHand.OFF_HAND:InteractionHand.MAIN_HAND).is(net.minecraft.world.item.Items.SHIELD));
-        echo.visual(ChronoFactory.tint(tl),24,moving,a.getFloat("walkPhase"),f.getMainHandItem(),swung,pitch);
+        echo.visual(ChronoFactory.tint(tl),24,moving,a.getFloat("walkPhase"),f.getMainHandItem(),swung,f.getXRot());
         a.putInt("rawIndex",tick+1);a.putString("reason",String.format(Locale.ROOT,"Strict input playback %.2f / %.2f s", (tick+1)/20.0,frames.length/60.0));
         saveCursor(f,a);a.put("inventory",f.getInventory().save(new ListTag()));f.getInventory().clearContent();
         if(!a.getBoolean("creative"))ChronoFactory.energy(watch,ChronoFactory.energy(watch)-8);

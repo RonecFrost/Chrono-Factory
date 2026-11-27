@@ -66,7 +66,7 @@ final class WorkstationActions{
             if(!resultMatches(actual,expected,grind))return new ItemActions.Outcome(false,false,"Workstation result differs; no output taken");
             // Native result slot pays XP, consumes ingredients, and grants real output.
             menu.clicked(2,0,ClickType.QUICK_MOVE,f);
-            if(!menu.getSlot(2).getItem().isEmpty()&&menu.getSlot(0).hasItem())return new ItemActions.Outcome(false,false,"No room for workstation output");
+            if(menu.getSlot(0).hasItem()||menu.getSlot(1).hasItem())return new ItemActions.Outcome(false,false,"No room for workstation output");
             ListTag pairs=job.getList("enchantedOutputs",Tag.TAG_COMPOUND);CompoundTag pair=new CompoundTag();pair.put("expected",a.getCompound("result").copy());pair.put("actual",actual.copyWithCount(1).save(l.registryAccess()));pairs.add(pair);job.put("enchantedOutputs",pairs);
             return new ItemActions.Outcome(true,true,"Completed "+a.getString("station")+" transaction");
         }finally{f.closeContainer();}

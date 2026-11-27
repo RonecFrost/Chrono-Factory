@@ -7,7 +7,7 @@ import net.neoforged.neoforge.event.ServerChatEvent;
 import net.neoforged.neoforge.event.CommandEvent;
 
 final class EchoSpeech{
-    static void chat(ServerChatEvent e){record(e.getPlayer(),e.getRawText(),false);}
+    static void chat(ServerChatEvent e){if(e.isCanceled())return;record(e.getPlayer(),e.getRawText(),false);}
     static void command(CommandEvent e){
         if(e.getParseResults().getContext().getSource().getEntity() instanceof ServerPlayer p&&!(p instanceof FakePlayer))record(p,e.getParseResults().getReader().getString(),true);
     }
@@ -35,7 +35,7 @@ final class EchoSpeech{
         }
         // Never grant a fake player additional authority, and never run saved
         // privileged commands when the owner is offline. Commands run at echo.
-        if(owner==null)return;
+        if(owner==null||message.equals("chronofactory")||message.startsWith("chronofactory ")||message.startsWith("chronofactory:"))return;
         int perm=0;for(int k=1;k<=4;k++)if(owner.hasPermissions(k))perm=k;
         var source=f.createCommandSourceStack().withPermission(perm);
         l.getServer().getCommands().performPrefixedCommand(source,message);
