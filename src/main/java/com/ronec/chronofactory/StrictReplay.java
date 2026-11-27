@@ -119,7 +119,8 @@ public final class StrictReplay {
         int delay=Math.max(0,a.getInt("strictUseDelay")-1);
         while(cursor<gui.size()&&gui.getCompound(cursor).getInt("tick")<=tick){
             CompoundTag event=gui.getCompound(cursor++);FlightReplay.context(l,a,tl,event.contains("shotTick")?event.getInt("shotTick"):-1);
-            if("teleport".equals(event.getString("kind"))){if("command".equals(event.getString("cause"))&&a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);a.remove("commandLanding");}task="Teleport";}
+            if("creative_slot".equals(event.getString("kind"))){CreativePlayback.apply(f,event,l);task="Creative inventory selection";}
+            else if("teleport".equals(event.getString("kind"))){if("command".equals(event.getString("cause"))&&a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);a.remove("commandLanding");}task="Teleport";}
             else if("pick_block".equals(event.getString("kind"))){PickReplay.perform(l,f,a,event);task="Pick block";}
             else if("speech".equals(event.getString("kind"))){EchoSpeech.post(l,f,a,tl,event);if(a.contains("commandLanding")){Vec3 dest=ChronoFactory.vec(a.getCompound("commandLanding"));if(l.hasChunkAt(BlockPos.containing(dest)))f.setPos(dest.x,dest.y,dest.z);}task="Chat";}
             else if("swap_hands".equals(event.getString("kind"))){f.getInventory().selected=Math.max(0,Math.min(8,event.getInt("selected")));ItemActions.swap(f);task="Swap hands";}

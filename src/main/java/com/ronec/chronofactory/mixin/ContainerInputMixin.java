@@ -12,6 +12,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ServerGamePacketListenerImpl.class)
 public abstract class ContainerInputMixin {
     @Shadow public ServerPlayer player;
+    @Inject(method="handleSetCreativeModeSlot",at=@At("HEAD"))
+    private void chronoCreativeBefore(net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket packet,CallbackInfo ci){if(player.server.isSameThread())ChronoFactory.creativeSlotBefore(player);}
+    @Inject(method="handleSetCreativeModeSlot",at=@At("RETURN"))
+    private void chronoCreativeAfter(net.minecraft.network.protocol.game.ServerboundSetCreativeModeSlotPacket packet,CallbackInfo ci){if(player.server.isSameThread())ChronoFactory.creativeSlotAfter(player);}
     @Inject(method="handleContainerClick",at=@At("HEAD"))
     private void chronoClick(ServerboundContainerClickPacket packet,CallbackInfo ci){
         if(player.server.isSameThread()&&packet.getContainerId()==player.containerMenu.containerId)

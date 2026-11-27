@@ -41,7 +41,7 @@ public final class TimekeeperScreen extends Screen {
         button(10,78,half,main,()->{
             if(recording()){send("cycle",0);}
             else if(running())send("dismiss_current",0);
-            else if(hasCurrent())send("manifest",0);
+            else if(hasCurrent())minecraft.setScreen(new LaunchScreen(this,key,-1,state.getString("currentName")));
             else {send("cycle",0);onClose();}
         },recording()||unlocked);
         button(20+half,78,half,recording()?"Cancel recording":"Clear recording",()->send(recording()?"cancel":"clear",0),recording()||(unlocked&&hasCurrent()&&!running()));
@@ -53,7 +53,7 @@ public final class TimekeeperScreen extends Screen {
         boolean jobs=state.getList("jobs",Tag.TAG_COMPOUND).size()>0;
         boolean allPaused=jobs&&state.getInt("pausedCount")==state.getList("jobs",Tag.TAG_COMPOUND).size();
         button(10,153,half,allPaused?"Resume all":"Pause all",()->send(allPaused?"resume_all":"pause_all",0),jobs);
-        button(20+half,153,half,"Task controls...",()->minecraft.setScreen(new PlaybackScreen(this,key,state)),jobs);
+        button(20+half,153,half,state.getBoolean("preview")?"Cancel preview":"Task controls...",()->{if(state.getBoolean("preview"))send("cancel_preview",0);else minecraft.setScreen(new PlaybackScreen(this,key,state));},jobs||state.getBoolean("preview"));
         if(creative()){
             button(10,178,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
             button(20+half,178,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
@@ -66,7 +66,7 @@ public final class TimekeeperScreen extends Screen {
                 button(w-258,y,43,entry.getInt("repeats")==0?"Inf.":entry.getInt("repeats")+"x",()->repeat(entry.getUUID("id"),entry.getInt("repeats")),unlocked&&!entry.getBoolean("active"));}
                 button(w-212,y,35,entry.getBoolean("strict")?"Input":"Adapt.",()->send("mode",i),unlocked&&!entry.getBoolean("active"));
                 button(w-174,y,50,ChronoFactory.TINT_NAMES[entry.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(i,w-174,y,50,entry.getInt("tint")),unlocked);
-                button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->send("toggle",i),unlocked);
+                button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->{if(entry.getBoolean("active"))send("toggle",i);else minecraft.setScreen(new LaunchScreen(this,key,i,entry.getString("name")));},unlocked);
                 button(w-44,y,34,"Del",()->send("delete",i),unlocked&&!entry.getBoolean("active"));
             }
             button(10,h-25,32,"<",()->{page--;clearWidgets();init();},page>0);
@@ -141,7 +141,7 @@ public final class TimekeeperScreen extends Screen {
         g.fill(left+10,top+37,left+10+bar,top+47,0xFF7530AA);
         g.drawCenteredString(font,creative()?"UNLIMITED ENERGY":energy+" / 100000 FE",left+w/2,top+38,0xFFFFFFFF);
         String status=recording()?"RECORDING":running()?(state.getInt("pausedCount")>0?"ECHO ACTIVE / PAUSED":"ECHO ACTIVE"):hasCurrent()?"RECORDING READY":"NO RECORDING";
-        if(state.getBoolean("otherRecording"))status="ANOTHER WATCH IS RECORDING";
+        if(state.getBoolean("otherRecording"))status="ANOTHER WATCH IS RECORDING";else if(state.getBoolean("preview"))status="ROUTE PREVIEW ARMED";
         g.drawString(font,status,left+10,top+52,recording()?0xFFFF6C84:running()?0xFF7BE0AB:purple,false);
         g.drawString(font,state.getInt("steps")+" steps  |  "+state.getInt("activeCount")+" active echoes",left+10,top+65,grey,false);
         if(creative()){
@@ -156,6 +156,6 @@ public final class TimekeeperScreen extends Screen {
         super.render(g,mouseX,mouseY,partialTick);
         renderTintDropdown(g,mouseX,mouseY);
     }
-    @Override public void tick(){if(++poll%20==0&&popupIndex==CLOSED&&(running()||state.getInt("activeCount")>0))send("refresh",0);}
+    @Override public void tick(){if(++poll%20==0&&popupIndex==CLOSED&&(running()||state.getInt("activeCount")>0||state.getBoolean("preview")))send("refresh",0);}
     @Override public boolean isPauseScreen(){return false;}
 }
