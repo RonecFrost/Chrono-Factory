@@ -109,6 +109,14 @@ public final class ChronoFactory {
         };
         public Type<InputFrame> type(){return TYPE;}
     }
+    public record RenameTimeline(UUID watch,UUID timeline,String name) implements CustomPacketPayload {
+        public static final Type<RenameTimeline> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"rename_timeline"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,RenameTimeline> CODEC=new StreamCodec<>(){
+            public RenameTimeline decode(RegistryFriendlyByteBuf b){return new RenameTimeline(b.readUUID(),b.readUUID(),b.readUtf(48));}
+            public void encode(RegistryFriendlyByteBuf b,RenameTimeline p){b.writeUUID(p.watch());b.writeUUID(p.timeline());b.writeUtf(p.name(),48);}
+        };
+        public Type<RenameTimeline> type(){return TYPE;}
+    }
     public record UiCommand(UUID key,String action,int index) implements CustomPacketPayload {
         public static final Type<UiCommand> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"ui_command"));
         public static final StreamCodec<RegistryFriendlyByteBuf,UiCommand> CODEC=new StreamCodec<>() {
@@ -134,7 +142,8 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("7");
+        var registrar=e.registrar("8");
+        registrar.playToServer(RenameTimeline.TYPE,RenameTimeline.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)renameTimeline(p,msg);}));
         registrar.playToClient(InspectState.TYPE,InspectState.CODEC,(msg,ctx)->ctx.enqueueWork(()->ClientControls.inspect(msg)));
         registrar.playToServer(InputFrame.TYPE,InputFrame.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)rawInput(p,msg);}));
         registrar.playToServer(HeldInput.TYPE,HeldInput.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)inputEdge(p,msg);}));
@@ -305,7 +314,7 @@ public final class ChronoFactory {
         if(watch(stack)){e.setCanceled(true);p.getInventory().add(stack);return;}
         r.move(p);CompoundTag a=point(p,"drop");a.putInt("count",stack.getCount());a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
         Vec3 v=e.getEntity().getDeltaMovement();a.putDouble("vx",v.x);a.putDouble("vy",v.y);a.putDouble("vz",v.z);r.add(a);
-        if(r.menuSeen)r.previous=snapshot(p);
+        if(r.menuSeen)adjustBaseline(r,stack,-stack.getCount());
     }
     static void pickup(ItemEntityPickupEvent.Post e){
         if(!(e.getPlayer() instanceof ServerPlayer p)||p instanceof FakePlayer)return;
@@ -313,7 +322,7 @@ public final class ChronoFactory {
         ItemStack stack=e.getOriginalStack();int count=stack.getCount()-e.getCurrentStack().getCount();if(count<=0||watch(stack))return;
         r.move(p);CompoundTag a=point(p,"pickup");a.putInt("count",count);a.put("item",stack.copyWithCount(1).save(p.registryAccess()));
         Vec3 v=e.getItemEntity().position();a.putDouble("ix",v.x);a.putDouble("iy",v.y);a.putDouble("iz",v.z);r.add(a);
-        if(r.menuSeen)r.previous=snapshot(p);
+        if(r.menuSeen)adjustBaseline(r,stack,count);
     }
     static void rawInput(ServerPlayer p,InputFrame frame){
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||!Float.isFinite(frame.yaw())||!Float.isFinite(frame.pitch()))return;
@@ -331,7 +340,7 @@ public final class ChronoFactory {
         if(p instanceof FakePlayer)return;
         Recording r=RECORDINGS.get(p.getUUID());
         if(r==null||r.container==null)return;
-        if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;captureTransfers(p,r);}
+        if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;}
     }
     static void inputEdge(ServerPlayer p,HeldInput edge){
         Recording r=RECORDINGS.get(p.getUUID());if(r==null)return;
@@ -385,6 +394,12 @@ public final class ChronoFactory {
         }}
         return map;
     }
+    static void adjustBaseline(Recording r,ItemStack stack,int delta){
+        if(stack.isEmpty()||watch(stack))return;
+        String key=itemKey(stack);ItemStack before=r.previous.getOrDefault(key,ItemStack.EMPTY);
+        int n=Math.max(0,before.getCount()+delta);
+        if(n==0)r.previous.remove(key);else r.previous.put(key,stack.copyWithCount(n));
+    }
     static List<ItemStack> slotSnapshot(IItemHandler h){
         List<ItemStack> slots=new ArrayList<>();if(h!=null)for(int i=0;i<h.getSlots();i++)slots.add(h.getStackInSlot(i).copy());return slots;
     }
@@ -395,40 +410,48 @@ public final class ChronoFactory {
         r.add(a);
     }
     static void captureTransfers(ServerPlayer p,Recording r){
+        if(r.container==null)return;
         Map<String,ItemStack> now=snapshot(p);Set<String> keys=new TreeSet<>(now.keySet());keys.addAll(r.previous.keySet());
         IItemHandler h=handler(p.serverLevel(),r.container);
         List<ItemStack> current=slotSnapshot(h);
-        // Compare real inventory deltas with the storage's changed slots. Preserve pending
-        // slot differences until an item reaches the player's inventory (cursor clicks).
-        boolean changed=false;
-        // Deposit before withdrawal if both changed in one tick, preserving swap semantics.
+        int firstAction=r.actions.size();boolean deposited=false,withdrew=false;
         for(boolean take:new boolean[]{false,true})for(String k:keys){
             ItemStack before=r.previous.getOrDefault(k,ItemStack.EMPTY),after=now.getOrDefault(k,ItemStack.EMPTY);
-            int delta=after.getCount()-before.getCount();if(delta==0||(delta>0)!=take)continue;
-            changed=true;ItemStack item=take?after:before;int left=Math.abs(delta);
-            for(int slot=0;slot<Math.min(current.size(),r.containerBefore.size())&&left>0;slot++){
-                ItemStack old=r.containerBefore.get(slot),cur=current.get(slot);
-                int difference=take?matchingCount(old,item)-matchingCount(cur,item):matchingCount(cur,item)-matchingCount(old,item);
-                if(difference<=0)continue;int n=Math.min(left,difference);
-                recordTransfer(p,r,item,n,take,slot);left-=n;
-                if(take){ItemStack adjusted=old.copy();adjusted.shrink(n);r.containerBefore.set(slot,adjusted);}
-                else{ItemStack adjusted=cur.copyWithCount(matchingCount(old,item)+n);r.containerBefore.set(slot,adjusted);}
+            int delta=after.getCount()-before.getCount();
+            if(delta==0||(delta>0)!=take)continue;
+            ItemStack item=take?after:before;
+            int slots=Math.min(current.size(),r.containerBefore.size());
+            int[] changes=new int[slots];
+            for(int slot=0;slot<slots;slot++){
+                int old=matchingCount(r.containerBefore.get(slot),item),cur=matchingCount(current.get(slot),item);
+                changes[slot]=take?old-cur:cur-old;
             }
-            if(left>0)recordTransfer(p,r,item,left,take,-1);
+            int requested=Math.abs(delta);
+            int[] allocation=TransferAmounts.allocate(requested,changes);
+            int recorded=0;
+            for(int slot=0;slot<slots;slot++){
+                int n=allocation[slot];if(n<=0)continue;
+                recordTransfer(p,r,item,n,take,slot);recorded+=n;
+            }
+            // Some modded inventories expose slots differently from their menu.
+            // Only infer an unslotted transfer if the handler cannot supply a
+            // slot snapshot. With a real snapshot, require physical evidence.
+            if(slots==0&&requested>recorded){recordTransfer(p,r,item,requested-recorded,take,-1);recorded=requested;}
+            if(recorded>0){if(take)withdrew=true;else deposited=true;}
         }
-        if(changed&&now.isEmpty()&&r.bulkStart>=0&&r.bulkStart<r.actions.size()){
-            // Keep original transfers for strict playback. In parallel playback, replace
-            // the demonstrated complete emptying of inventory with a physical deposit-all.
-            boolean valid=true;for(int i=r.bulkStart;i<r.actions.size();i++){CompoundTag a=r.actions.getCompound(i);if(!"transfer".equals(a.getString("type"))||a.getBoolean("take")||a.getLong("pos")!=r.container.asLong()){valid=false;break;}}
-            if(valid){r.actions.getCompound(r.bulkStart).putBoolean("bulkStart",true);for(int i=r.bulkStart+1;i<r.actions.size();i++)r.actions.getCompound(i).putBoolean("bulkSkip",true);}
-            r.bulkStart=-1;
+        if(deposited&&!withdrew&&now.isEmpty()&&firstAction<r.actions.size()){
+            // Keep a complete dump adaptive, while preserving the net recorded
+            // quantities and preferred destination slots for the layout.
+            r.actions.getCompound(firstAction).putBoolean("bulkStart",true);
+            for(int i=firstAction+1;i<r.actions.size();i++)r.actions.getCompound(i).putBoolean("bulkSkip",true);
         }
-        r.previous=now;
+        r.previous=now;r.containerBefore=current;r.bulkStart=-1;
     }
     static IItemHandler handler(ServerLevel l,BlockPos pos){return l.getCapability(Capabilities.ItemHandler.BLOCK,pos,null);}
     static void onUse(PlayerInteractEvent.RightClickBlock e){
         if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||watch(e.getItemStack())||e.isCanceled())return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||e.getHand()!=InteractionHand.MAIN_HAND)return;
+        if(r.container!=null&&r.menuSeen&&p.containerMenu==p.inventoryMenu){captureTransfers(p,r);r.container=null;r.menuSeen=false;r.pendingUse=null;}
         r.move(p);BlockPos pos=e.getPos();
         CompoundTag a=point(p,"use");a.putInt("recordTick",r.tick);a.putInt("holdId",r.useDown?r.useEpoch:0);a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
         BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));
@@ -460,7 +483,7 @@ public final class ChronoFactory {
             Vec3 delta=p.position().subtract(r.lastRawPos);r.lastRawPos=p.position();
             r.motion.add(Float.floatToIntBits((float)delta.x));r.motion.add(Float.floatToIntBits((float)delta.y));r.motion.add(Float.floatToIntBits((float)delta.z));
             if(r.container!=null){
-                if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;captureTransfers(p,r);}
+                if(p.containerMenu!=p.inventoryMenu){r.menuSeen=true;r.pendingUse=null;}
                 else if(r.menuSeen){captureTransfers(p,r);r.container=null;r.menuSeen=false;r.bulkStart=-1;}
                 else if(r.pendingUse!=null){r.add(r.pendingUse);r.pendingUse=null;r.container=null;r.bulkStart=-1;}
             }
@@ -500,11 +523,10 @@ public final class ChronoFactory {
     static int transfer(FakePlayer f,IItemHandler h,ItemStack wanted,int n,boolean take,int exactSlot){
         int initial=n;
         if(h==null||wanted.isEmpty()||n<=0||exactSlot>=h.getSlots())return 0;
-        int first=exactSlot>=0?exactSlot:0,last=exactSlot>=0?exactSlot+1:h.getSlots();
+        int first=take?0:Math.max(0,exactSlot),last=h.getSlots();
         Inventory inv=f.getInventory();
         if(take){
-            int available=0,space=0;
-            for(int i=first;i<last;i++){ItemStack s=h.getStackInSlot(i);if(matches(s,wanted))available+=h.extractItem(i,n,true).getCount();}
+            int available=availableToTake(h,wanted,n),space=0;
             for(int i=0;i<36;i++){ItemStack s=inv.getItem(i);if(s.isEmpty())space+=wanted.getMaxStackSize();else if(ItemStack.isSameItemSameComponents(s,wanted))space+=Math.max(0,s.getMaxStackSize()-s.getCount());}
             if(available<n||space<n)return 0;
             for(int i=first;i<last&&n>0;i++){if(!matches(h.getStackInSlot(i),wanted))continue;ItemStack s=h.extractItem(i,n,false);int got=s.getCount();inv.add(s);if(!s.isEmpty())f.drop(s,false);n-=got;}return initial-n;
@@ -513,6 +535,15 @@ public final class ChronoFactory {
         // Insert only actual stacks, preserving durability and components. Partial transfers track remaining count.
         for(int i=0;i<36&&n>0;i++){ItemStack s=inv.getItem(i);if(!matches(s,wanted))continue;int want=Math.min(n,s.getCount());ItemStack pending=s.copyWithCount(want);pending=insertPreferred(h,pending,exactSlot);int moved=want-pending.getCount();s.shrink(moved);n-=moved;}
         return initial-n;
+    }
+    static int availableToTake(IItemHandler h,ItemStack wanted,int limit){
+        int available=0;
+        if(h==null||wanted.isEmpty()||limit<=0)return 0;
+        for(int i=0;i<h.getSlots()&&available<limit;i++){
+            if(!matches(h.getStackInSlot(i),wanted))continue;
+            ItemStack simulated=h.extractItem(i,limit-available,true);
+            if(matches(simulated,wanted))available+=simulated.getCount();
+        }return available;
     }
     static ItemStack insertPreferred(IItemHandler h,ItemStack stack,int preferred){
         if(h==null||stack.isEmpty())return stack;
@@ -621,6 +652,7 @@ public final class ChronoFactory {
             String task=index<actions.size()?actions.getCompound(index).getString("type"):"Remanifesting";
             if(strict)task=a.getString("strictTask");
             else if(index<actions.size()&&actions.getCompound(index).getBoolean("bulkStart"))task="Organized deposit";
+            else if(index<actions.size()&&"transfer".equals(task)){CompoundTag action=actions.getCompound(index);task=(action.getBoolean("take")?"Withdraw ":"Deposit ")+action.getInt("count")+" x "+itemName(template(action,p.serverLevel()));}
             state.putString("task",task.isEmpty()?"Waiting":task);
             state.put("inventory",a.getList("inventory",Tag.TAG_COMPOUND).copy());
             if(a.contains("strictCursor"))state.put("cursor",a.getCompound("strictCursor").copy());
@@ -799,7 +831,8 @@ public final class ChronoFactory {
                     int moved=transfer(f,h,wanted,n,take,slot);a.putInt("transferred",a.getInt("transferred")+moved);
                     done=a.getInt("transferred")>=expected||(!strict&&!take&&carried(f,wanted)==0);working=moved>0;
                     String where=coords(pos)+(slot>=0?" preferred slot "+(slot+1):"");
-                    reason=take?"Waiting to withdraw "+(expected-a.getInt("transferred"))+" x "+itemName(wanted)+" at "+where:"Waiting to deposit "+itemName(wanted)+" at "+where+" (missing items or destination full)";
+                    int remaining=Math.max(0,expected-a.getInt("transferred"));
+                    reason=take?"Withdraw "+expected+" x "+itemName(wanted)+"; "+remaining+" remaining, "+availableToTake(h,wanted,remaining)+" available (up to required) at "+where:"Waiting to deposit "+itemName(wanted)+" at "+where+" (missing items or destination full)";
                 }
             }else if("use".equals(type)){
                 int elapsed=a.getInt("heldElapsed"),cursor=a.getInt("useCursor");
@@ -870,6 +903,30 @@ public final class ChronoFactory {
         tl.putInt("tint",value);UUID tid=tl.getUUID("id");
         for(ServerLevel l:p.server.getAllLevels()){WorldData d=world(l);for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;if(a.getUUID("owner").equals(p.getUUID())&&a.getUUID("watch").equals(key)&&a.getCompound("timeline").getUUID("id").equals(tid)){a.getCompound("timeline").putInt("tint",value);d.setDirty();}}}
     }
+    static void renameTimeline(ServerPlayer p,RenameTimeline msg){
+        ItemStack s=find(p,msg.watch());if(s.isEmpty()||RECORDINGS.containsKey(p.getUUID()))return;
+        String name=msg.name().strip();if(name.isEmpty()||name.length()>48||name.chars().anyMatch(Character::isISOControl)){sendUi(p,s);return;}
+        CompoundTag t=data(s);boolean changed=false;
+        if(t.contains("current")){CompoundTag tl=t.getCompound("current");if(tl.getUUID("id").equals(msg.timeline())){tl.putString("name",name);t.put("current",tl);changed=true;}}
+        if(creative(s)){
+            ListTag saved=t.getList("saved",Tag.TAG_COMPOUND);
+            for(Tag x:saved){CompoundTag tl=(CompoundTag)x;if(tl.getUUID("id").equals(msg.timeline())){tl.putString("name",name);changed=true;break;}}
+            if(changed)t.put("saved",saved);
+        }
+        if(changed){
+            put(s,t);p.getInventory().setChanged();
+            for(ServerLevel l:p.server.getAllLevels()){
+                WorldData d=world(l);for(Tag x:d.echoes){CompoundTag a=(CompoundTag)x;
+                    if(a.getUUID("owner").equals(p.getUUID())&&a.getUUID("watch").equals(msg.watch())&&a.getCompound("timeline").getUUID("id").equals(msg.timeline())){
+                        a.getCompound("timeline").putString("name",name);
+                        if(a.hasUUID("entity")&&l.getEntity(a.getUUID("entity")) instanceof EchoEntity e)e.setCustomName(Component.literal(name));
+                        d.setDirty();
+                    }
+                }
+            }
+        }
+        sendUi(p,s);
+    }
     static void sendUi(ServerPlayer p,ItemStack s){
         if(!watch(s))return;
         UUID key=id(s);CompoundTag t=data(s), summary=new CompoundTag();
@@ -877,12 +934,12 @@ public final class ChronoFactory {
         summary.putBoolean("creative",creative(s));summary.putBoolean("retain",t.getBoolean("retain"));summary.putInt("energy",energy(s));
         summary.putBoolean("recording",recording);summary.putBoolean("otherRecording",rec!=null&&!recording);
         summary.putInt("steps",recording?rec.actions.size():t.contains("current")?timeline(t.getCompound("current")).size():0);
-        summary.putBoolean("current",t.contains("current"));summary.putBoolean("strict",t.contains("current")?t.getCompound("current").getBoolean("strict"):t.getBoolean("strict"));summary.putInt("tint",t.contains("current")?tint(t.getCompound("current")):tint(t));
+        summary.putBoolean("current",t.contains("current"));if(t.contains("current")){CompoundTag cur=t.getCompound("current");summary.putUUID("currentId",cur.getUUID("id"));summary.putString("currentName",cur.getString("name"));}summary.putBoolean("strict",t.contains("current")?t.getCompound("current").getBoolean("strict"):t.getBoolean("strict"));summary.putInt("tint",t.contains("current")?tint(t.getCompound("current")):tint(t));
         summary.putBoolean("currentActive",t.contains("current")&&active(p,key,t.getCompound("current").getUUID("id")));
         ListTag entries=new ListTag(), saved=t.getList("saved",Tag.TAG_COMPOUND);
         int count=0;
         for(Tag x:saved){CompoundTag tl=(CompoundTag)x,entry=new CompoundTag();boolean running=active(p,key,tl.getUUID("id"));
-            entry.putString("name",tl.getString("name"));entry.putBoolean("strict",tl.getBoolean("strict"));entry.putInt("tint",tint(tl));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
+            entry.putString("name",tl.getString("name"));entry.putUUID("id",tl.getUUID("id"));entry.putBoolean("strict",tl.getBoolean("strict"));entry.putInt("tint",tint(tl));entry.putInt("steps",timeline(tl).size());entry.putBoolean("active",running);if(running)count++;entries.add(entry);}
         if(summary.getBoolean("currentActive"))count++;
         summary.putInt("activeCount",count);summary.put("saved",entries);
         PacketDistributor.sendToPlayer(p,new UiState(key,summary));

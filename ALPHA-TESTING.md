@@ -1,4 +1,4 @@
-# Chrono Factory 0.4.1-alpha
+# Chrono Factory 0.4.2-alpha
 Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposable test world.
 - Actual custom player-model Echo entity, using the online owner's skin and slim/wide arm model when available. Default skin fallback. Translucent tint, intermittent limb desync, and particle manifestation.
 - Right-click an Echo for current loop number, action index, reason, and inventory in chat. Right-click the watch to change the current or each saved timeline's tint (8 choices).
@@ -39,3 +39,8 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Adaptive (formerly Parallel): withdrawals search matching source slots; deposits start at recorded destination slot then advance and wrap. Empty-inventory bulk deposits first reserve recorded destinations for matching items, then spill over; extra collected items use remaining space. Capture transfer deltas after individual GUI clicks. New recordings recommended for accurate layout. Existing Adaptive recordings still load.
 - Right-click Echo for live, read-only inventory inspection and task, status, cycle, progress, armor/offhand and cursor. Updates twice per second within 8 blocks; no transfer access yet.
 - Test single vanilla chest source and destination first, manual click transfer into bottom-right slot and repeat with full slot, then multiple wood types. Input: change source item and verify exact destination, remove source item and verify clock continues; block the path and verify no overshoot. Back up worlds.
+
+## 0.4.2 net transfer quantity and names
+- Adaptive records the net quantity moved during a chest visit, not transient cursor pickups. A source stack of 5 reduced to 4 records 1. Matching quantity may be spread across source slots. Wait only if fewer than the outstanding required quantity are extractable or inventory space is inadequate. Destination preferences retained. Same-item rearrangements within one chest with zero net movement are not Adaptive transport; use Input for those. Re-record affected old timelines.
+- Click the current timeline name or a saved timeline's name to rename it (48 chars). Renaming active timelines updates their world state without restarting. Inspector displays recorded transfer quantity and availability.
+- Regression checks cover net transfer allocation, not actual Minecraft GUI or third-party shift-scroll behavior. Test vanilla split and Mouse Tweaks shift-scroll in a disposable world, with source counts 5,4,3,2,1,0 and replenishment.

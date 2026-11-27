@@ -28,9 +28,10 @@ public final class TimekeeperScreen extends Screen {
         Button b=Button.builder(Component.literal(label),v->callback.run()).bounds(left+x,top+y,width,20).build();
         b.active=enabled;return addRenderableWidget(b);
     }
+    private void rename(UUID id,String name){minecraft.setScreen(new TimelineNameScreen(this,key,id,name));}
     @Override protected void init(){
         popupIndex=CLOSED;
-        w=Math.min(344,width-12);h=Math.min(creative()?278:204,height-8);
+        w=Math.min(344,width-12);h=Math.min(creative()?302:204,height-8);
         left=(width-w)/2;top=(height-h)/2;
         int half=(w-30)/2;
         boolean unlocked=!recording()&&!state.getBoolean("otherRecording");
@@ -45,14 +46,16 @@ public final class TimekeeperScreen extends Screen {
         button(10,103,half,"Retain: "+(state.getBoolean("retain")?"ON":"OFF"),()->send("retain",0),unlocked);
         button(20+half,103,half,"Tint: "+ChronoFactory.TINT_NAMES[state.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(-1,20+half,103,half,state.getInt("tint")),unlocked);
         button(w-137,17,127,state.getBoolean("strict")?"Mode: Input":"Mode: Adaptive",()->send("mode",-1),unlocked&&!running());
+        if(hasCurrent()&&state.hasUUID("currentId"))button(10,128,w-20,"Rename: "+font.plainSubstrByWidth(state.getString("currentName"),w-76),()->rename(state.getUUID("currentId"),state.getString("currentName")),unlocked);
         if(creative()){
-            button(10,128,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
-            button(20+half,128,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
-            rows=Math.max(1,(h-181)/22);
+            button(10,153,half,"Save current",()->send("save",0),unlocked&&hasCurrent()&&saved().size()<20);
+            button(20+half,153,half,"Dismiss all",()->send("dismiss_all",0),unlocked&&state.getInt("activeCount")>0);
+            rows=Math.max(1,(h-206)/22);
             int max=Math.max(0,(saved().size()-1)/rows);page=Math.min(page,max);
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
-                int y=154+row*22;CompoundTag entry=saved().getCompound(i);
+                int y=179+row*22;CompoundTag entry=saved().getCompound(i);
+                if(entry.hasUUID("id"))button(10,y,Math.max(24,w-225),font.plainSubstrByWidth(entry.getString("name"),Math.max(12,w-235)),()->rename(entry.getUUID("id"),entry.getString("name")),unlocked);
                 button(w-212,y,35,entry.getBoolean("strict")?"Input":"Adapt.",()->send("mode",i),unlocked&&!entry.getBoolean("active"));
                 button(w-174,y,50,ChronoFactory.TINT_NAMES[entry.getInt("tint")%ChronoFactory.TINT_NAMES.length]+" ▾",()->openTint(i,w-174,y,50,entry.getInt("tint")),unlocked);
                 button(w-122,y,74,entry.getBoolean("active")?"Dismiss":"Manifest",()->send("toggle",i),unlocked);
@@ -136,15 +139,12 @@ public final class TimekeeperScreen extends Screen {
         if(creative()){
             for(int row=0;row<rows;row++){
                 int i=page*rows+row;if(i>=saved().size())break;
-                CompoundTag t=saved().getCompound(i);int y=154+row*22;
-                g.fill(left+10,top+y,left+w-218,top+y+20,0xFF261C31);
-                String name=font.plainSubstrByWidth(t.getString("name"),Math.max(10,w-236));
-                g.drawString(font,name,left+14,top+y+2,0xFF000000|ChronoFactory.TINTS[t.getInt("tint")%ChronoFactory.TINTS.length],false);
-                g.drawString(font,t.getInt("steps")+" steps"+(t.getBoolean("active")?" / active":""),left+14,top+y+11,grey,false);
+                CompoundTag t=saved().getCompound(i);int y=179+row*22;
+                
             }
             int max=Math.max(1,(saved().size()+rows-1)/rows);
             g.drawString(font,(page+1)+"/"+max+"   "+saved().size()+" saved",left+84,top+h-19,grey,false);
-        }else g.drawString(font,"Left-click to cycle. Right-click to manage.",left+10,top+132,grey,false);
+        }else g.drawString(font,"Left-click to cycle. Right-click to manage.",left+10,top+155,grey,false);
         super.render(g,mouseX,mouseY,partialTick);
         renderTintDropdown(g,mouseX,mouseY);
     }
