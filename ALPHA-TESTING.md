@@ -19,3 +19,6 @@ Minecraft 1.21.1 / NeoForge 21.1.268 / Java 21. Back up worlds and use a disposa
 - Complete inventory emptying into a container becomes a deposit-all action in parallel; strict retains the original actions. Re-record existing tree loops to capture new deposit-all and slot information. Mode can be selected before recording or changed on inactive current/saved timelines.
 - Record vertical movement every tick, validate swept player-sized collision with axis-ordered ascent/descent. New obstructions still freeze. No unrestricted pathfinding or automatic tree search outside the recorded block positions.
 - Test one-block jumps and descents, differently shaped trees, random drops, full output chest, missing sapling, strict mismatches and differing source slots. Backup world first.
+
+- Air attacks while recording now send bounded swing samples. Parallel replays them against the actual ray target for the sampled duration, preserving saplings; strict expects empty space. New recordings only. Client packets are accepted only while a server-side recording is active.
+- Track cursor-held items as part of the temporary inventory, and when needed take a verified vertical-first or horizontal-first ledge step toward the recorded goal. No collision bypass.

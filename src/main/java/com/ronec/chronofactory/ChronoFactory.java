@@ -86,6 +86,12 @@ public final class ChronoFactory {
         public static final StreamCodec<RegistryFriendlyByteBuf,Click> CODEC=StreamCodec.unit(INSTANCE);
         public Type<Click> type(){return TYPE;}
     }
+    public record AirSwing() implements CustomPacketPayload {
+        public static final AirSwing INSTANCE=new AirSwing();
+        public static final Type<AirSwing> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"air_swing"));
+        public static final StreamCodec<RegistryFriendlyByteBuf,AirSwing> CODEC=StreamCodec.unit(INSTANCE);
+        public Type<AirSwing> type(){return TYPE;}
+    }
     public record UiCommand(UUID key,String action,int index) implements CustomPacketPayload {
         public static final Type<UiCommand> TYPE=new Type<>(ResourceLocation.fromNamespaceAndPath(ID,"ui_command"));
         public static final StreamCodec<RegistryFriendlyByteBuf,UiCommand> CODEC=new StreamCodec<>() {
@@ -103,7 +109,8 @@ public final class ChronoFactory {
         public Type<UiState> type(){return TYPE;}
     }
     static void registerNetwork(RegisterPayloadHandlersEvent e){
-        var registrar=e.registrar("3");
+        var registrar=e.registrar("4");
+        registrar.playToServer(AirSwing.TYPE,AirSwing.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p)recordAirSwing(p);}));
         registrar.playToServer(Click.TYPE,Click.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) cycle(p);}));
         registrar.playToServer(UiCommand.TYPE,UiCommand.CODEC,(msg,ctx)->ctx.enqueueWork(()->{if(ctx.player() instanceof ServerPlayer p) uiCommand(p,msg);}));
         registrar.playToClient(UiState.TYPE,UiState.CODEC,(msg,ctx)->ctx.enqueueWork(()->ClientControls.show(msg)));
@@ -163,7 +170,7 @@ public final class ChronoFactory {
         CompoundTag pendingUse;
         int bulkStart=-1;
         boolean menuSeen;
-        int tick,lastMoveTick;
+        int tick,lastMoveTick,lastAirTick=-20;
         Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);}
         void add(CompoundTag a){if(actions.size()<MAX_ACTIONS)actions.add(a);}
         void move(ServerPlayer p){CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){a.putInt("moveTicks",Math.max(1,Math.min(4,tick-lastMoveTick)));add(a);last=a;lastMoveTick=tick;}}
@@ -186,6 +193,7 @@ public final class ChronoFactory {
         if(p.isCreative())p.setGameMode(GameType.SURVIVAL);
         p.getInventory().clearContent();p.getInventory().setItem(slot,s);
         p.getInventory().selected=slot;p.getInventory().setChanged();
+        CompoundTag recordingTag=data(s);recordingTag.putBoolean("recording",true);put(s,recordingTag);
         RECORDINGS.put(p.getUUID(),new Recording(p,key));
         p.inventoryMenu.broadcastChanges();p.inventoryMenu.sendAllDataToRemote();say(p,"RECORDING STARTED - walk or interact, then left-click again to finish. Your original inventory is protected.");
     }
@@ -207,6 +215,7 @@ public final class ChronoFactory {
         CompoundTag b=persistent.getCompound(BACKUP);UUID key=b.getUUID("watch");ItemStack timekeeper=find(p,key);
         List<ItemStack> extras=new ArrayList<>();
         for(int i=0;i<p.getInventory().getContainerSize();i++){ItemStack s=p.getInventory().getItem(i);if(!s.isEmpty()&&s!=timekeeper)extras.add(s.copy());}
+        if(!timekeeper.isEmpty()){CompoundTag tag=data(timekeeper);tag.remove("recording");put(timekeeper,tag);}
         p.getInventory().clearContent();p.getInventory().load(b.getList("inventory",Tag.TAG_COMPOUND));
         p.getInventory().setItem(b.getInt("slot"),timekeeper);
         for(ItemStack s:extras){p.getInventory().add(s);if(!s.isEmpty())p.drop(s,false);}
@@ -234,10 +243,25 @@ public final class ChronoFactory {
         Vec3 v=e.getItemEntity().position();a.putDouble("ix",v.x);a.putDouble("iy",v.y);a.putDouble("iz",v.z);r.add(a);
         if(r.menuSeen)r.previous=snapshot(p);
     }
+    static BlockHitResult aimedBlock(Player p){
+        Vec3 eye=p.getEyePosition();return p.level().clip(new ClipContext(eye,eye.add(p.getLookAngle().scale(Math.min(5,p.blockInteractionRange()))),ClipContext.Block.OUTLINE,ClipContext.Fluid.NONE,p));
+    }
+    static void recordAirSwing(ServerPlayer p){
+        Recording r=RECORDINGS.get(p.getUUID());
+        if(r==null||p.containerMenu!=p.inventoryMenu||r.tick-r.lastAirTick<3||watch(p.getMainHandItem())||aimedBlock(p).getType()!=HitResult.Type.MISS)return;
+        r.lastAirTick=r.tick;r.move(p);
+        CompoundTag a=point(p,"air_swing");a.putInt("ticks",4);
+        ItemStack held=p.getMainHandItem();if(!held.isEmpty())a.put("item",held.copyWithCount(1).save(p.registryAccess()));r.add(a);
+    }
     static String itemKey(ItemStack s){ItemStack copy=s.copyWithCount(1);if(copy.isDamageableItem())copy.setDamageValue(0);return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(copy.getItem()).toString()+":"+copy.getComponentsPatch();}
     static Map<String,ItemStack> snapshot(ServerPlayer p){
         Map<String,ItemStack> map=new HashMap<>();
         for(int i=0;i<36;i++){ItemStack s=p.getInventory().getItem(i);if(s.isEmpty()||watch(s))continue;String k=itemKey(s);if(map.containsKey(k))map.get(k).grow(s.getCount());else map.put(k,s.copy());}
+        // Cursor-held stacks still belong to the recording inventory until actually
+        // deposited. This avoids false transfers during ordinary click/drag operations.
+        if(p.containerMenu!=p.inventoryMenu){ItemStack cursor=p.containerMenu.getCarried();if(!cursor.isEmpty()&&!watch(cursor)){
+            String key=itemKey(cursor);if(map.containsKey(key))map.get(key).grow(cursor.getCount());else map.put(key,cursor.copy());
+        }}
         return map;
     }
     static List<ItemStack> slotSnapshot(IItemHandler h){
@@ -396,6 +420,17 @@ public final class ChronoFactory {
         Vec3 xFirst=new Vec3(next.x,here.y,here.z),zFirst=new Vec3(here.x,here.y,next.z);
         return (clearSegment(l,f,here,xFirst)&&clearSegment(l,f,xFirst,next))||(clearSegment(l,f,here,zFirst)&&clearSegment(l,f,zFirst,next));
     }
+        static Vec3 ledgeStep(ServerLevel l,FakePlayer f,Vec3 here,Vec3 goal,double travel){
+        double dy=goal.y-here.y;
+        if(Math.abs(dy)<.001||Math.abs(dy)>1.25||here.distanceTo(goal)>1.65)return null;
+        // If a straight interpolation cuts the lip, first clear the lip vertically
+        // when ascending, or move horizontally off it before descending.
+        Vec3 corner=dy>0?new Vec3(here.x,goal.y,here.z):new Vec3(goal.x,here.y,goal.z);
+        if(!clearSegment(l,f,here,corner)||!clearSegment(l,f,corner,goal))return null;
+        Vec3 leg=corner.subtract(here);if(leg.length()<1e-6)leg=goal.subtract(here);
+        double length=leg.length();if(length<1e-6)return goal;
+        return here.add(leg.scale(Math.min(1,travel/length)));
+    }
     static boolean saplingNear(ServerLevel l,BlockPos pos){
         for(int dy=0;dy<=3;dy++)if(l.getBlockState(pos.below(dy)).is(BlockTags.SAPLINGS))return true;return false;
     }
@@ -481,7 +516,7 @@ public final class ChronoFactory {
             if(fade%2==0)particles(l,here,fade,color,position.getFloat("yaw"));
             if(fade>=8){
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -523,7 +558,9 @@ public final class ChronoFactory {
                 Vec3 next=distance<1e-6?goal:here.add(diff.scale(travel/distance));
                 f.setPos(here.x,here.y,here.z);
                 if(!routeClear(l,f,here,next)){
-                    done=false;reason="Route obstructed near "+coords(BlockPos.containing(next));break;
+                    Vec3 detour=ledgeStep(l,f,here,goal,travel);
+                    if(detour==null||!routeClear(l,f,here,detour)){done=false;reason="Route obstructed near "+coords(BlockPos.containing(next));break;}
+                    next=detour;travel=here.distanceTo(next);
                 }
                 float fraction=distance<1e-6?1f:(float)(travel/distance);
                 float yaw=net.minecraft.util.Mth.rotLerp(fraction,position.getFloat("yaw"),waypoint.getFloat("yaw"));
@@ -532,10 +569,30 @@ public final class ChronoFactory {
                 position.putFloat("yaw",yaw);position.putFloat("pitch",pitch);a.put("position",position);
                 walking|=next.distanceTo(here)>.002;here=next;working=true;reason="Following recorded route";
                 if(!strict)sweepItems(f,l,here);
-                done=distance-travel<1e-5;
+                done=here.distanceToSqr(goal)<1e-10;
                 time-=travel/speed;
                 if(!done||time<1e-5||index+1>=actions.size()||!"move".equals(actions.getCompound(index+1).getString("type")))break;
                 index++;a.putInt("index",index);a.remove("segmentSpeed");done=false;
+            }
+        }else if("air_swing".equals(type)){
+            if(!equip(f,wanted))reason="Missing required item: "+itemName(wanted);
+            else{
+                f.setYRot(action.getFloat("yaw"));f.setXRot(action.getFloat("pitch"));f.setShiftKeyDown(action.getBoolean("sneak"));
+                BlockHitResult hit=aimedBlock(f);boolean miss=hit.getType()==HitResult.Type.MISS;
+                if(strict&&!miss)reason="Expected empty space, found block at "+coords(hit.getBlockPos());
+                else{
+                    swung=true;working=true;int waited=a.getInt("waited")+1;a.putInt("waited",waited);
+                    if(!miss){
+                        BlockPos pos=hit.getBlockPos();BlockState state=l.getBlockState(pos);
+                        if(!state.is(BlockTags.SAPLINGS)){
+                            if(!a.contains("sweepPos")||a.getLong("sweepPos")!=pos.asLong()){a.putLong("sweepPos",pos.asLong());a.putFloat("sweepProgress",0);}
+                            float progress=a.getFloat("sweepProgress")+state.getDestroyProgress(f,l,pos);
+                            a.putFloat("sweepProgress",progress);
+                            if(progress>=1){if(f.gameMode.destroyBlock(pos)){a.remove("sweepPos");a.remove("sweepProgress");}}
+                        }
+                    }else{a.remove("sweepPos");a.remove("sweepProgress");}
+                    done=waited>=Math.max(1,action.getInt("ticks"));reason="Recorded swing";
+                }
             }
         }else if("drop".equals(type)||"pickup".equals(type)){
             int count=action.getInt("count"),remaining=count-a.getInt("transferred");
@@ -590,6 +647,7 @@ public final class ChronoFactory {
             }
         }
         if(!strict&&"wait".equals(type))sweepItems(f,l,here);
+        if(!"air_swing".equals(type)&&!"move".equals(type)){a.remove("sweepPos");a.remove("sweepProgress");}
         if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);
         double moved=echo.position().distanceTo(here);
