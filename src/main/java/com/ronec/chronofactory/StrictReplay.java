@@ -38,8 +38,16 @@ public final class StrictReplay {
             if(containerMenu!=inventoryMenu){AbstractContainerMenu old=containerMenu;containerMenu=inventoryMenu;old.removed(this);}
         }
     }
+    static void restoreCursor(MacroPlayer f,CompoundTag a){
+        ItemStack cursor=a.contains("strictCursor")?ItemStack.parseOptional(f.registryAccess(),a.getCompound("strictCursor")):ItemStack.EMPTY;
+        f.containerMenu.setCarried(cursor);
+    }
+    static void saveCursor(MacroPlayer f,CompoundTag a){
+        ItemStack cursor=f.containerMenu.getCarried();if(cursor.isEmpty())a.remove("strictCursor");else a.put("strictCursor",cursor.save(f.registryAccess()));
+    }
     static void finishCycle(MacroPlayer f,CompoundTag a){
-        f.closeContainer();
+        f.closeContainer();ItemStack cursor=f.inventoryMenu.getCarried();f.inventoryMenu.setCarried(ItemStack.EMPTY);
+        if(!cursor.isEmpty()){f.getInventory().add(cursor);if(!cursor.isEmpty())f.drop(cursor,false);}a.remove("strictCursor");
         a.remove("strictVx");a.remove("strictVy");a.remove("strictVz");a.remove("strictUseDelay");a.remove("strictMinePos");a.remove("strictMineProgress");a.remove("strictAttackDelay");a.remove("strictFlags");
     }
     static void forget(MacroPlayer f,CompoundTag a){finishCycle(f,a);PLAYERS.remove(f.getUUID());}
@@ -73,7 +81,7 @@ public final class StrictReplay {
         double acceleration=ground?((flags&SNEAK)!=0?.031:(flags&SPRINT)!=0?.13:.10):.026;
         input=input.scale(acceleration).yRot(-yaw*Mth.DEG_TO_RAD);
         vx+=input.x;vz+=input.z;
-        Vec3 desired=new Vec3(vx,vy,vz);f.move(MoverType.SELF,desired);
+        Vec3 desired=new Vec3(vx,vy,vz);if(l.hasChunkAt(BlockPos.containing(here.add(desired))))f.move(MoverType.SELF,desired);
         Vec3 actual=f.position().subtract(here);
         if(Math.abs(actual.x-vx)>1e-5)vx=0;if(Math.abs(actual.z-vz)>1e-5)vz=0;if(Math.abs(actual.y-vy)>1e-5)vy=0;
         double drag=f.onGround()?.546:.91;
@@ -114,7 +122,7 @@ public final class StrictReplay {
         echo.setPos(now.x,now.y,now.z);echo.setYRot(yaw);echo.setXRot(pitch);echo.setShiftKeyDown((flags&SNEAK)!=0);
         echo.visual(ChronoFactory.tint(tl),24,moving,a.getFloat("walkPhase"),f.getMainHandItem(),swung,pitch);
         a.putInt("rawIndex",tick+1);a.putString("reason",String.format(Locale.ROOT,"Strict input playback %.2f / %.2f s", (tick+1)/20.0,frames.length/60.0));
-        a.put("inventory",f.getInventory().save(new ListTag()));f.getInventory().clearContent();
+        saveCursor(f,a);a.put("inventory",f.getInventory().save(new ListTag()));f.getInventory().clearContent();
         if(!a.getBoolean("creative"))ChronoFactory.energy(watch,ChronoFactory.energy(watch)-8);
     }
 }
