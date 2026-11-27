@@ -26,7 +26,12 @@ final class EnchantReplay{
         for(int i=0;i<36;i++){ItemStack st=f.getInventory().getItem(i);if(ChronoFactory.matches(st,wanted)&&st.getCount()>=n)return st.split(n);}
         return ItemStack.EMPTY;
     }
-    static ItemActions.Outcome perform(ServerLevel l,StrictReplay.MacroPlayer f,CompoundTag a,BlockPos pos){
+    static ItemStack resolveOutput(CompoundTag job,ItemStack wanted,ServerLevel l){
+        if(wanted.isEmpty())return wanted;
+        for(Tag x:job.getList("enchantedOutputs",Tag.TAG_COMPOUND)){CompoundTag pair=(CompoundTag)x;ItemStack recorded=ItemStack.parseOptional(l.registryAccess(),pair.getCompound("expected"));if(ChronoFactory.matches(recorded,wanted))return ItemStack.parseOptional(l.registryAccess(),pair.getCompound("actual"));}
+        return wanted;
+    }
+    static ItemActions.Outcome perform(ServerLevel l,StrictReplay.MacroPlayer f,CompoundTag job,CompoundTag a,BlockPos pos){
         int option=a.getInt("option"),fee=option+1,required=Math.max(fee,a.getInt("required"));
         if(option<0||option>=3||!l.getBlockState(pos).is(Blocks.ENCHANTING_TABLE))return new ItemActions.Outcome(false,false,"Waiting for enchanting table");
         if(f.experienceLevel<required)return new ItemActions.Outcome(false,false,"Enchant option "+fee+": need "+required+" levels, have "+f.experienceLevel);
@@ -38,7 +43,7 @@ final class EnchantReplay{
         try{
             ItemStack input=take(f,wanted,1);if(input.isEmpty())return new ItemActions.Outcome(false,false,"Missing enchantment item");
             menu.getSlot(0).set(input);
-            ItemStack payment=lapis.copyWithCount(0);int left=fee;
+            int left=fee;
             for(int i=0;i<36&&left>0;i++){ItemStack st=f.getInventory().getItem(i);if(!ChronoFactory.matches(st,lapis))continue;int n=Math.min(left,st.getCount());st.shrink(n);left-=n;}
             menu.getSlot(1).set(lapis.copyWithCount(fee-left));
             int current=menu.costs[option];
@@ -46,6 +51,9 @@ final class EnchantReplay{
             if(f.experienceLevel<current)return new ItemActions.Outcome(false,false,"Enchant option "+fee+": current table requires "+current+" levels");
             int before=f.experienceLevel;boolean accepted=menu.clickMenuButton(f,option);
             boolean done=accepted&&f.experienceLevel<before;
+            if(done&&a.contains("observedResult")&&!menu.getSlot(0).getItem().isEmpty()){
+                ListTag pairs=job.getList("enchantedOutputs",Tag.TAG_COMPOUND);CompoundTag pair=new CompoundTag();pair.put("expected",a.getCompound("observedResult").copy());pair.put("actual",menu.getSlot(0).getItem().copyWithCount(1).save(l.registryAccess()));pairs.add(pair);job.put("enchantedOutputs",pairs);
+            }
             return new ItemActions.Outcome(done,done,done?"Enchanted using option "+fee:"Enchant option "+fee+" rejected");
         }finally{f.closeContainer();}
     }

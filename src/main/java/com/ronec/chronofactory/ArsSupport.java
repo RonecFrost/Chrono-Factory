@@ -69,7 +69,7 @@ final class ArsSupport{
             if(!book(stack))return new ItemActions.Outcome(false,false,"No matching Ars spellbook");
             select(stack,slot);Object c=caster(stack);int chosen=(Integer)invoke(c,"getCurrentSlot");Object spell=invoke(c,"getSpell",chosen);
             if(!(Boolean)invoke(spell,"isValid"))return new ItemActions.Outcome(false,false,"Spell slot "+(chosen+1)+" is empty or invalid");
-            manaTick(f,job);Object cap=mana(f);if(cap==null)return new ItemActions.Outcome(false,false,"Ars mana capability unavailable");
+            if(!job.contains("arsMana"))manaTick(f,job);Object cap=mana(f);if(cap==null)return new ItemActions.Outcome(false,false,"Ars mana capability unavailable");
             int cost=((Number)invoke(spell,"getCost")).intValue();int discount=((Number)invoke(Class.forName(ROOT+"api.util.ManaUtil"),"getPlayerDiscounts",f,spell,stack)).intValue();cost=Math.max(0,cost-discount);
             double before=((Number)invoke(cap,"getCurrentMana")).doubleValue();
             if(before<cost)return new ItemActions.Outcome(false,false,"Waiting for mana: "+(int)before+"/"+cost);

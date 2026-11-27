@@ -910,7 +910,7 @@ public final class ChronoFactory {
                 }
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
                 a.remove("boundaryDropped");
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("lastItemClock");a.remove("itemFired");a.remove("itemStarted");a.remove("playClock");
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("rawIndex",0);a.putInt("guiIndex",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");a.remove("sweepPos");a.remove("sweepProgress");a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("lastItemClock");a.remove("itemFired");a.remove("itemStarted");a.remove("playClock");a.remove("enchantedOutputs");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -1006,7 +1006,7 @@ public final class ChronoFactory {
             if(!l.hasChunkAt(pos))reason="Target chunk is not loaded";
             else if(here.distanceToSqr(Vec3.atCenterOf(pos))>36)reason="Target out of reach at "+coords(pos);
             else if("enchant".equals(type)){
-                ItemActions.Outcome result=EnchantReplay.perform(l,(StrictReplay.MacroPlayer)f,action,pos);done=result.done();working=result.working();swung=working;reason=result.reason();
+                ItemActions.Outcome result=EnchantReplay.perform(l,(StrictReplay.MacroPlayer)f,a,action,pos);done=result.done();working=result.working();swung=working;reason=result.reason();
             }else if("menu_transaction".equals(type)){
                 ItemActions.Outcome result=MenuTransactions.perform(l,(StrictReplay.MacroPlayer)f,a,action);done=result.done();working=result.working();reason=result.reason();
             }else if("craft".equals(type)){
@@ -1020,6 +1020,7 @@ public final class ChronoFactory {
                     int left=depositOrganized(f,h,actions,index,l);done=left==0;working=left<before;reason="Destination full or rejects "+left+" carried items at "+coords(pos);
                 }else{
                     boolean take=action.getBoolean("take");int expected=action.getInt("count");
+                    if(!take)wanted=EnchantReplay.resolveOutput(a,wanted,l);
                     boolean machine=machineInventory(l,pos);int slot=(!take||machine)&&action.contains("slot")?action.getInt("slot"):-1;
                     if(slot>=h.getSlots())slot=-1;
                     int n=expected-a.getInt("transferred");
@@ -1050,6 +1051,7 @@ public final class ChronoFactory {
                         InteractionResult result=f.gameMode.useItemOn(f,l,f.getMainHandItem(),InteractionHand.MAIN_HAND,new BlockHitResult(new Vec3(action.getDouble("hx"),action.getDouble("hy"),action.getDouble("hz")),Direction.from3DDataValue(action.getInt("face")),pos,false));
                         if(f.containerMenu!=f.inventoryMenu)f.closeContainer();
                         if(result.consumesAction()){a.putInt("useCursor",++cursor);swung=true;}
+                        else if(ArsSupport.book(f.getMainHandItem())){ItemActions.Outcome cast=ArsSupport.cast(l,f,a,f.getMainHandItem(),action.getInt("spellSlot"));advance=cast.done();reason=cast.reason();if(advance){a.putInt("useCursor",++cursor);swung=true;}}
                         else{advance=false;reason="Interaction rejected at "+coords(pos)+" using "+itemName(wanted);}
                     }
                 }
@@ -1084,7 +1086,7 @@ public final class ChronoFactory {
             }
         }
         if(!strict&&"wait".equals(type))sweepItems(f,l,here);
-        ItemActions.collectXp(f,l);ItemActions.saveXp(f,a);ArsSupport.saveMana(f,a);
+        f.setPos(here.x,here.y,here.z);ItemActions.collectArrows(f,l);ItemActions.collectXp(f,l);ItemActions.saveXp(f,a);ArsSupport.saveMana(f,a);
         if(!"move".equals(type)&&("item_use".equals(type)||"attack_entity".equals(type)||"drop".equals(type)||"use".equals(type))){position.putFloat("yaw",f.getYRot());position.putFloat("pitch",f.getXRot());a.put("position",position);}
         if(!"air_swing".equals(type)&&!"move".equals(type)){a.remove("sweepPos");a.remove("sweepProgress");}
         if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("heldElapsed");a.remove("useCursor");a.remove("brokenForHold");a.remove("crafted");a.remove("itemStarted");a.remove("itemFired");a.remove("segmentSpeed");reason="Completed "+type;}
