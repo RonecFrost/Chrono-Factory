@@ -198,7 +198,7 @@ public final class ChronoFactory {
         if(!(e.getEntity() instanceof ServerPlayer p)||p instanceof FakePlayer||watch(e.getItemStack()))return;
         Recording r=RECORDINGS.get(p.getUUID());if(r==null||e.getHand()!=InteractionHand.MAIN_HAND)return;
         r.move(p);BlockPos pos=e.getPos();
-        if(handler(p.serverLevel(),pos)!=null&&!p.isShiftKeyDown()){r.container=pos.immutable();r.previous=snapshot(p);r.menuSeen=false;return;}
+        if(handler(p.serverLevel(),pos)!=null&&!p.isShiftKeyDown()&&e.getItemStack().isEmpty()){r.container=pos.immutable();r.previous=snapshot(p);r.menuSeen=false;return;}
         CompoundTag a=point(p,"use");a.putLong("pos",pos.asLong());a.putString("block",net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(p.level().getBlockState(pos).getBlock()).toString());
         BlockHitResult h=e.getHitVec();a.putInt("face",h.getDirection().get3DDataValue());a.putDouble("hx",h.getLocation().x);a.putDouble("hy",h.getLocation().y);a.putDouble("hz",h.getLocation().z);if(!e.getItemStack().isEmpty())a.put("item",e.getItemStack().copyWithCount(1).save(p.registryAccess()));r.add(a);
     }
@@ -268,19 +268,19 @@ public final class ChronoFactory {
         ServerPlayer owner=l.getServer().getPlayerList().getPlayer(a.getUUID("owner"));
         ItemStack watch=owner==null?ItemStack.EMPTY:find(owner,a.getUUID("watch"));
         ArmorStand stand=a.hasUUID("stand")&&l.getEntity(a.getUUID("stand")) instanceof ArmorStand st?st:null;
-        FakePlayer f=FakePlayerFactory.get(l,new GameProfile(a.getUUID("id"),"ChronoEcho"));f.getInventory().clearContent();f.getInventory().load(a.getList("inventory",Tag.TAG_COMPOUND));f.setPos(here.x,here.y,here.z);f.setYRot(position.getFloat("yaw"));f.setXRot(position.getFloat("pitch"));f.setShiftKeyDown(position.getBoolean("sneak"));
+        FakePlayer f=FakePlayerFactory.get(l,new GameProfile(a.getUUID("id"),"ChronoEcho"));f.getInventory().clearContent();f.getInventory().load(a.getList("inventory",Tag.TAG_COMPOUND));f.setPos(here.x,here.y,here.z);f.setOnGround(true);f.setYRot(position.getFloat("yaw"));f.setXRot(position.getFloat("pitch"));f.setShiftKeyDown(position.getBoolean("sneak"));
         if(a.getBoolean("dismiss")||(!watch.isEmpty()&&!a.getBoolean("creative")&&energy(watch)<=0)){
             for(int i=0;i<f.getInventory().getContainerSize();i++){ItemStack s=f.getInventory().getItem(i);if(!s.isEmpty())l.addFreshEntity(new ItemEntity(l,here.x,here.y,here.z,s.copy()));}
             f.getInventory().clearContent();if(stand!=null)stand.discard();return true;
         }
         if(owner==null||watch.isEmpty()){f.getInventory().clearContent();return false;}
-        if(stand==null){stand=new ArmorStand(l,here.x,here.y,here.z);stand.setNoGravity(true);stand.setInvulnerable(true);stand.setMarker(true);stand.setShowArms(true);stand.setCustomName(Component.literal(a.getString("name")+" [Echo]"));stand.setCustomNameVisible(true);stand.addTag("chronofactory_echo");l.addFreshEntity(stand);a.putUUID("stand",stand.getUUID());}
+        if(stand==null){stand=new ArmorStand(l,here.x,here.y,here.z);stand.setNoGravity(true);stand.setInvulnerable(true);CompoundTag marker=new CompoundTag();marker.putBoolean("Marker",true);stand.readAdditionalSaveData(marker);stand.setNoGravity(true);stand.setInvulnerable(true);stand.setShowArms(true);stand.setCustomName(Component.literal(a.getString("name")+" [Echo]"));stand.setCustomNameVisible(true);stand.addTag("chronofactory_echo");l.addFreshEntity(stand);a.putUUID("stand",stand.getUUID());}
         ListTag actions=timeline(a.getCompound("timeline"));if(actions.isEmpty())return true;
         int index=a.getInt("index")%actions.size();CompoundTag action=actions.getCompound(index);String type=action.getString("type");Vec3 target=vec(action);boolean done=false;
         if(!l.hasChunkAt(BlockPos.containing(target))){f.getInventory().clearContent();return false;}
         if("move".equals(type)){
             Vec3 diff=target.subtract(here);double distance=diff.length();Vec3 next=distance<=.3?target:here.add(diff.scale(.3/distance));
-            if(l.noCollision(f,f.getBoundingBox().move(next.subtract(here)))){position=action.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);a.put("position",position);here=next;done=distance<=.3;}
+            if(l.noCollision(f.getBoundingBox().move(next.subtract(here)))){position=action.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);a.put("position",position);here=next;done=distance<=.3;}
         }else{
             BlockPos pos=BlockPos.of(action.getLong("pos"));ItemStack wanted=template(action,l);
             if(l.hasChunkAt(pos)&&here.distanceToSqr(Vec3.atCenterOf(pos))<=36){
