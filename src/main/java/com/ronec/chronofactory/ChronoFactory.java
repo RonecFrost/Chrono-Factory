@@ -159,10 +159,10 @@ public final class ChronoFactory {
         BlockPos container;
         Map<String,ItemStack> previous=new HashMap<>();
         boolean menuSeen;
-        int tick;
+        int tick,lastMoveTick;
         Recording(ServerPlayer p,UUID w){watch=w;dimension=p.level().dimension().location().toString();last=point(p,"move");actions.add(last);}
         void add(CompoundTag a){if(actions.size()<MAX_ACTIONS)actions.add(a);}
-        void move(ServerPlayer p){CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){add(a);last=a;}}
+        void move(ServerPlayer p){CompoundTag a=point(p,"move");if(Math.abs(a.getDouble("x")-last.getDouble("x"))+Math.abs(a.getDouble("y")-last.getDouble("y"))+Math.abs(a.getDouble("z")-last.getDouble("z"))>.025||Math.abs(a.getFloat("yaw")-last.getFloat("yaw"))>8||Math.abs(a.getFloat("pitch")-last.getFloat("pitch"))>8){a.putInt("moveTicks",Math.max(1,Math.min(4,tick-lastMoveTick)));add(a);last=a;lastMoveTick=tick;}}
     }
     static void cycle(ServerPlayer p){
         ItemStack s=p.getMainHandItem();if(!watch(s))return;
@@ -383,7 +383,7 @@ public final class ChronoFactory {
             if(fade%2==0)particles(l,here,fade,color,position.getFloat("yaw"));
             if(fade>=8){
                 CompoundTag first=actions.getCompound(0);if(!l.hasChunkAt(BlockPos.containing(vec(first)))){a.putString("reason","Waiting for starting chunk to load");f.getInventory().clearContent();return false;}
-                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);
+                if(echo!=null)echo.discard();a.remove("entity");a.put("position",first.copy());a.putInt("index",0);a.putInt("fade",0);a.putInt("phase",0);a.putInt("cycles",a.getInt("cycles")+1);a.putFloat("walkPhase",0);a.remove("segmentSpeed");
             }
             f.getInventory().clearContent();if(!a.getBoolean("creative"))energy(watch,energy(watch)-2);return false;
         }
@@ -406,10 +406,38 @@ public final class ChronoFactory {
         else if("wait".equals(type)){
             int waited=a.getInt("waited")+1;a.putInt("waited",waited);done=waited>=action.getInt("ticks");working=true;reason="Recorded pause ("+waited+"/"+action.getInt("ticks")+" ticks)";
         }else if("move".equals(type)){
-            Vec3 diff=target.subtract(here);double distance=diff.length();Vec3 next=distance<=.3?target:here.add(diff.scale(.3/distance));
-            if(!l.getBlockCollisions(f,f.getBoundingBox().move(next.subtract(here))).iterator().hasNext()){
-                position=action.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);a.put("position",position);walking=next.distanceTo(here)>.01;here=next;done=distance<=.3;working=true;reason="Following recorded route";
-            }else reason="Route obstructed near "+coords(BlockPos.containing(next));
+            // Spend a full tick of movement across consecutive waypoints, instead of
+            // slowing down to a tiny last step at every recorded sample.
+            double time=1.0;
+            for(int segments=0;segments<12;segments++){
+                CompoundTag waypoint=actions.getCompound(index);Vec3 goal=vec(waypoint);
+                if(!l.hasChunkAt(BlockPos.containing(goal))){done=false;reason="Waiting for recorded chunk to load";break;}
+                Vec3 diff=goal.subtract(here);double distance=diff.length();
+                if(!a.contains("segmentSpeed")||a.getInt("segmentIndex")!=index){
+                    double speed=.23;
+                    if(waypoint.contains("moveTicks")&&index>0){
+                        double full=goal.distanceTo(vec(actions.getCompound(index-1)));
+                        if(full>.025)speed=Math.max(.08,Math.min(.36,full/Math.max(1,waypoint.getInt("moveTicks"))));
+                    }
+                    a.putDouble("segmentSpeed",speed);a.putInt("segmentIndex",index);
+                }
+                double speed=a.getDouble("segmentSpeed");double travel=Math.min(distance,speed*time);
+                Vec3 next=distance<1e-6?goal:here.add(diff.scale(travel/distance));
+                f.setPos(here.x,here.y,here.z);
+                if(l.getBlockCollisions(f,f.getBoundingBox().move(next.subtract(here))).iterator().hasNext()){
+                    done=false;reason="Route obstructed near "+coords(BlockPos.containing(next));break;
+                }
+                float fraction=distance<1e-6?1f:(float)(travel/distance);
+                float yaw=net.minecraft.util.Mth.rotLerp(fraction,position.getFloat("yaw"),waypoint.getFloat("yaw"));
+                float pitch=net.minecraft.util.Mth.lerp(fraction,position.getFloat("pitch"),waypoint.getFloat("pitch"));
+                position=waypoint.copy();position.putDouble("x",next.x);position.putDouble("y",next.y);position.putDouble("z",next.z);
+                position.putFloat("yaw",yaw);position.putFloat("pitch",pitch);a.put("position",position);
+                walking|=next.distanceTo(here)>.002;here=next;working=true;reason="Following recorded route";
+                done=distance-travel<1e-5;
+                time-=travel/speed;
+                if(!done||time<1e-5||index+1>=actions.size()||!"move".equals(actions.getCompound(index+1).getString("type")))break;
+                index++;a.putInt("index",index);a.remove("segmentSpeed");done=false;
+            }
         }else if("drop".equals(type)||"pickup".equals(type)){
             int count=action.getInt("count"),remaining=count-a.getInt("transferred");
             int moved="drop".equals(type)?groundDrop(f,wanted,remaining,action):groundPickup(f,l,wanted,remaining,action);
@@ -442,10 +470,10 @@ public final class ChronoFactory {
                 }else reason="Unsupported action: "+type;
             }
         }
-        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);reason="Completed "+type;}
+        if(done){a.putInt("index",index+1);a.putFloat("progress",0);a.putInt("transferred",0);a.putInt("waited",0);a.remove("segmentSpeed");reason="Completed "+type;}
         a.putString("reason",reason);
         double moved=echo.position().distanceTo(here);
-        echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));
+        echo.setPos(here.x,here.y,here.z);echo.setYRot(position.getFloat("yaw"));echo.setXRot(position.getFloat("pitch"));echo.setShiftKeyDown(position.getBoolean("sneak"));
         if(walking)a.putFloat("walkPhase",a.getFloat("walkPhase")+(float)moved*5);
         echo.visual(color,24,walking,a.getFloat("walkPhase"),f.getMainHandItem(),swung,position.getFloat("pitch"));
         echo.setCustomName(Component.literal(tl.getString("name")));
@@ -485,6 +513,15 @@ public final class ChronoFactory {
         }else if(r==null){
             ListTag saved=t.getList("saved",Tag.TAG_COMPOUND);int i=cmd.index();
             switch(cmd.action()){
+                case "set_tint" -> {
+                    int selected=Math.floorMod(i,TINTS.length), targetIndex=Math.floorDiv(i,TINTS.length)-1;
+                    if(i>=0&&targetIndex==-1){
+                        if(t.contains("current")){CompoundTag tl=t.getCompound("current");changeTint(p,cmd.key(),tl,selected);t.put("current",tl);}
+                        else t.putInt("tint",selected);put(s,t);
+                    }else if(i>=0&&creative(s)&&targetIndex>=0&&targetIndex<saved.size()){
+                        CompoundTag tl=saved.getCompound(targetIndex);changeTint(p,cmd.key(),tl,selected);t.put("saved",saved);put(s,t);
+                    }
+                }
                 case "tint" -> {if(i==-1){if(t.contains("current")){CompoundTag tl=t.getCompound("current");changeTint(p,cmd.key(),tl,(tint(tl)+1)%TINTS.length);t.put("current",tl);}else t.putInt("tint",(tint(t)+1)%TINTS.length);put(s,t);}else if(creative(s)&&i>=0&&i<saved.size()){CompoundTag tl=saved.getCompound(i);changeTint(p,cmd.key(),tl,(tint(tl)+1)%TINTS.length);t.put("saved",saved);put(s,t);}}
                 case "retain" -> {t.putBoolean("retain",!t.getBoolean("retain"));put(s,t);}
                 case "manifest" -> {if(t.contains("current"))manifest(p,s,t.getCompound("current"));}

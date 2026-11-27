@@ -9,6 +9,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.util.Mth;
 
 public final class EchoEntity extends PathfinderMob {
     static final EntityDataAccessor<String> OWNER=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.STRING);
@@ -20,6 +21,11 @@ public final class EchoEntity extends PathfinderMob {
     static final EntityDataAccessor<ItemStack> HELD=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.ITEM_STACK);
     static final EntityDataAccessor<Boolean> SWING=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.BOOLEAN);
     static final EntityDataAccessor<Float> LOOK=SynchedEntityData.defineId(EchoEntity.class,EntityDataSerializers.FLOAT);
+    // Client-only presentation state: authoritative action execution never depends on these.
+    private boolean animationReady=false;
+    private float oldPhase,clientPhase,oldStride,clientStride,oldSwing,clientSwing,oldLook,clientLook,oldFade,clientFade;
+    private float oldAge,clientAge;
+    private boolean swingInProgress;
     public EchoEntity(EntityType<? extends PathfinderMob> type,Level level){super(type,level);setNoAi(true);setNoGravity(true);setInvulnerable(true);setPersistenceRequired();noPhysics=true;}
     @Override protected void defineSynchedData(SynchedEntityData.Builder b){
         super.defineSynchedData(b);b.define(OWNER,"");b.define(LOOP,"");b.define(TINT,0);b.define(PHASE,0);b.define(WALK,false);b.define(WALK_PHASE,0f);b.define(HELD,ItemStack.EMPTY);b.define(SWING,false);b.define(LOOK,0f);
@@ -41,7 +47,32 @@ public final class EchoEntity extends PathfinderMob {
     @Override public boolean isPushable(){return false;}
     @Override public boolean isPickable(){return true;}
     @Override public void push(double x,double y,double z){}
-    @Override public void tick(){super.tick();setDeltaMovement(Vec3.ZERO);}
+    @Override public void tick(){
+        super.tick();setDeltaMovement(Vec3.ZERO);
+        if(!level().isClientSide())return;
+        if(!animationReady){
+            clientPhase=walkPhase();clientLook=lookPitch();clientFade=phase();clientStride=walking()?.9f:0;animationReady=true;
+        }
+        oldPhase=clientPhase;oldStride=clientStride;oldSwing=clientSwing;oldLook=clientLook;oldFade=clientFade;oldAge=clientAge;
+        // Track the cumulative server-side distance, and interpolate it at render time.
+        clientPhase=Mth.lerp(.8f,clientPhase,walkPhase());
+        clientStride=Mth.lerp(walking()?.48f:.32f,clientStride,walking()?.9f:0f);
+        if(clientStride<.005f)clientStride=0;
+        clientLook=Mth.lerp(.55f,clientLook,lookPitch());
+        clientFade=phase();
+        if(swinging()&&!swingInProgress){swingInProgress=true;clientSwing=0;oldSwing=0;}
+        if(swingInProgress){
+            clientSwing+=1f/6f;
+            if(clientSwing>=1){clientSwing=0;oldSwing=0;swingInProgress=false;}
+        }
+        if(walking()||swinging()||clientStride>.02f||swingInProgress)clientAge++;
+    }
+    float smoothWalk(float partial){return Mth.lerp(partial,oldPhase,clientPhase);}
+    float smoothStride(float partial){return Mth.lerp(partial,oldStride,clientStride);}
+    float smoothSwing(float partial){return Mth.lerp(partial,oldSwing,clientSwing);}
+    float smoothLook(float partial){return Mth.lerp(partial,oldLook,clientLook);}
+    float smoothFade(float partial){return animationReady?Mth.lerp(partial,oldFade,clientFade):phase();}
+    float smoothAge(float partial){return Mth.lerp(partial,oldAge,clientAge);}
     @Override protected InteractionResult mobInteract(Player player,InteractionHand hand){
         if(hand==InteractionHand.MAIN_HAND&&player instanceof ServerPlayer p)ChronoFactory.describe(p,this);
         return InteractionResult.sidedSuccess(level().isClientSide());

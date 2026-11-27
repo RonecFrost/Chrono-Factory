@@ -30,19 +30,18 @@ public final class EchoRenderer extends EntityRenderer<EchoEntity>{
     }
     @Override public ResourceLocation getTextureLocation(EchoEntity e){return skin(e).texture();}
     @Override public void render(EchoEntity e,float yaw,float partial,PoseStack pose,MultiBufferSource buffers,int light){
-        int phase=e.phase();if(phase<=10)return;
-        float alpha=.68f*Mth.clamp((phase-10)/14f,0f,1f);
+        int phase=e.phase();float fade=e.smoothFade(partial);if(fade<=10)return;
+        float alpha=.68f*Mth.clamp((fade-10)/14f,0f,1f);
         PlayerSkin skin=skin(e);PlayerModel<EchoEntity> model=skin.model()==PlayerSkin.Model.SLIM?slim:wide;
         pose.pushPose();pose.mulPose(Axis.YP.rotationDegrees(180-yaw));pose.scale(-1,-1,1);pose.translate(0,-1.501,0);
         model.setAllVisible(true);model.young=false;model.riding=false;model.crouching=e.isShiftKeyDown();
-        model.attackTime=e.swinging()?.35f:0f;
-        // Recorded movement phase stops changing during stasis.
-        model.setupAnim(e,e.walkPhase(),e.walking()?.95f:0f,0,0,e.lookPitch());
+        model.attackTime=e.smoothSwing(partial);
+        model.setupAnim(e,e.smoothWalk(partial),e.smoothStride(partial),e.smoothAge(partial),0,e.smoothLook(partial));
         int tint=ChronoFactory.TINTS[Math.floorMod(e.tint(),ChronoFactory.TINTS.length)];
         int color=((int)(alpha*255)<<24)|tint;
         // Intermittent limb desync, with actual transparent sections rather than painted patches.
-        if(phase==24&&((e.tickCount/5+e.getId())%47==0)){model.leftArm.visible=false;model.leftSleeve.visible=false;}
-        if(phase==24&&((e.tickCount/5+e.getId())%61==0)){model.rightLeg.visible=false;model.rightPants.visible=false;}
+        if(phase==24&&!e.walking()&&e.smoothStride(partial)<.05f&&((e.tickCount/5+e.getId())%47==0)){model.leftArm.visible=false;model.leftSleeve.visible=false;}
+        if(phase==24&&!e.walking()&&e.smoothStride(partial)<.05f&&((e.tickCount/5+e.getId())%61==0)){model.rightLeg.visible=false;model.rightPants.visible=false;}
         model.renderToBuffer(pose,buffers.getBuffer(RenderType.entityTranslucent(skin.texture())),light,OverlayTexture.NO_OVERLAY,color);
         if(phase==24&&!e.visualHeld().isEmpty()&&model.rightArm.visible){
             pose.pushPose();model.translateToHand(HumanoidArm.RIGHT,pose);pose.mulPose(Axis.XP.rotationDegrees(-90));pose.mulPose(Axis.YP.rotationDegrees(180));pose.translate(1f/16f,.125,-.625);
